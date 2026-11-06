@@ -2,23 +2,38 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function Home() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
   async function signIn() {
     if (!supabase) {
       setMessage("กรุณาตั้งค่า Supabase ก่อน");
       return;
     }
+
+    setLoading(true);
+    setMessage("");
+
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim(),
       password,
     });
-    setMessage(error ? error.message : "เข้าสู่ระบบสำเร็จ");
+
+    setLoading(false);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    router.push("/dashboard");
   }
 
   async function signUp() {
@@ -26,11 +41,21 @@ export default function Home() {
       setMessage("กรุณาตั้งค่า Supabase ก่อน");
       return;
     }
+
+    setLoading(true);
+    setMessage("");
+
     const { error } = await supabase.auth.signUp({
-      email,
+      email: email.trim(),
       password,
     });
-    setMessage(error ? error.message : "สมัครสมาชิกสำเร็จ");
+
+    setLoading(false);
+    setMessage(
+      error
+        ? error.message
+        : "สมัครสมาชิกสำเร็จ หากระบบขอให้ยืนยันอีเมล กรุณาตรวจสอบอีเมลก่อนเข้าสู่ระบบ"
+    );
   }
 
   return (
@@ -49,6 +74,7 @@ export default function Home() {
 
         <div className="panel">
           <h2>เข้าสู่ระบบ / สมัครสมาชิก</h2>
+
           <label>อีเมล</label>
           <input
             type="email"
@@ -56,6 +82,7 @@ export default function Home() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
           />
+
           <label>รหัสผ่าน</label>
           <input
             type="password"
@@ -63,12 +90,21 @@ export default function Home() {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="รหัสผ่าน"
           />
+
           <div className="actions">
-            <button onClick={signIn}>เข้าสู่ระบบ</button>
-            <button className="secondary" onClick={signUp}>
+            <button onClick={signIn} disabled={loading}>
+              {loading ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
+            </button>
+
+            <button
+              className="secondary"
+              onClick={signUp}
+              disabled={loading}
+            >
               สมัครสมาชิก
             </button>
           </div>
+
           {message && <p className="message">{message}</p>}
         </div>
       </section>
