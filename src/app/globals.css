@@ -1,0 +1,144 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700;800&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #09080f;
+  color: #f8f5ff;
+  font-family: Prompt, Arial, sans-serif;
+}
+
+.shell {
+  min-height: 100vh;
+  background: radial-gradient(ellipse at 50% 10%, #30204b, #100d19 45%, #09080f);
+  padding: 26px 7vw;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #ffffff18;
+  padding-bottom: 20px;
+}
+
+.brand {
+  font-weight: 800;
+  font-size: 22px;
+}
+
+.brand span,
+.tag,
+.eyebrow {
+  color: #d56aff;
+}
+
+.tag,
+.eyebrow {
+  letter-spacing: 3px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hero {
+  width: min(620px, 100%);
+  margin: 70px auto 40px;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: clamp(42px, 8vw, 76px);
+  line-height: 1.05;
+}
+
+.hero h1 span {
+  color: #d56aff;
+}
+
+.sub {
+  color: #b7adc6;
+  margin-bottom: 32px;
+}
+
+.panel {
+  text-align: left;
+  background: #171321;
+  border: 1px solid #ffffff20;
+  border-radius: 18px;
+  padding: 28px;
+}
+
+.panel h2 {
+  text-align: center;
+}
+
+.panel label {
+  display: block;
+  margin: 14px 0 7px;
+}
+
+.panel input {
+  width: 100%;
+  padding: 13px;
+  border: 1px solid #443650;
+  background: #0d0a13;
+  color: white;
+  border-radius: 9px;
+  font: inherit;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.actions button {
+  flex: 1;
+  padding: 13px;
+  border: 0;
+  border-radius: 9px;
+  background: #bd55e8;
+  color: #160d1d;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.actions .secondary {
+  background: #34283f;
+  color: white;
+}
+
+.message {
+  text-align: center;
+  color: #e5b6ff;
+}
+
+footer {
+  text-align: center;
+  color: #746b7e;
+  font-size: 12px;
+  margin-top: auto;
+  padding-top: 30px;
+}
+
+@media (max-width: 520px) {
+  .shell {
+    padding: 20px;
+  }
+
+  .panel {
+    padding: 20px;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+}
