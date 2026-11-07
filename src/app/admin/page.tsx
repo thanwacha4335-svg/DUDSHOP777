@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -8,6 +9,7 @@ type Member = {
   username: string | null;
   role: string;
   points: number;
+  assigned_panel: string | null;
 };
 
 export default function AdminPage() {
@@ -40,7 +42,7 @@ export default function AdminPage() {
 
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, username, role, points")
+      .select("id, username, role, points, assigned_panel")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -89,6 +91,38 @@ export default function AdminPage() {
     setLoading(false);
   }
 
+  async function changePanel(userId: string, panel: string) {
+    if (!supabase || loading) return;
+
+    const panelName =
+      panel === "reseller_300"
+        ? "แผงตัวแทน 300"
+        : panel === "reseller_1000"
+        ? "แผงตัวแทน 1000"
+        : "ยังไม่กำหนดแผง";
+
+    if (!window.confirm(`ต้องการกำหนดสมาชิกเป็น ${panelName} ใช่หรือไม่?`)) {
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    const { error } = await supabase.rpc("admin_set_member_panel", {
+      p_user_id: userId,
+      p_panel_key: panel,
+    });
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setMessage(`เปลี่ยนแผงเป็น ${panelName} สำเร็จ`);
+      await loadMembers();
+    }
+
+    setLoading(false);
+  }
+
   const filtered = members.filter((member) =>
     `${member.username || ""} ${member.id}`
       .toLowerCase()
@@ -105,7 +139,7 @@ export default function AdminPage() {
     }}>
       <div style={{ maxWidth: 900, margin: "auto" }}>
         <h1 style={{ color: "#b58aff" }}>DUDSHOP777 ADMIN</h1>
-        <p>ระบบจัดการเครดิตสมาชิก</p>
+        <p>ระบบจัดการสมาชิก เครดิต และแผงตัวแทน</p>
 
         <input
           value={search}
@@ -114,16 +148,64 @@ export default function AdminPage() {
           style={inputStyle}
         />
 
-        {message && <p>{message}</p>}
+        {message && (
+          <p style={{ color: "#d8b4fe" }}>{message}</p>
+        )}
 
         {filtered.map((member) => (
           <section key={member.id} style={cardStyle}>
             <h3>{member.username || "ไม่มีชื่อสมาชิก"}</h3>
+
             <p>สิทธิ์: {member.role}</p>
             <p>เครดิตปัจจุบัน: <b>{member.points}</b></p>
+
+            <p>
+              แผงปัจจุบัน:{" "}
+              <b style={{ color: "#c4b5fd" }}>
+                {member.assigned_panel === "reseller_300"
+                  ? "แผงตัวแทน 300"
+                  : member.assigned_panel === "reseller_1000"
+                  ? "แผงตัวแทน 1000"
+                  : "ยังไม่กำหนด"}
+              </b>
+            </p>
+
             <p style={{ fontSize: 12, color: "#aaa" }}>
               User ID: {member.id}
             </p>
+
+            {member.role === "member" && (
+              <>
+                <label style={{ color: "#d8b4fe" }}>
+                  กำหนดแผงสมาชิก
+                </label>
+
+                <select
+                  value={member.assigned_panel || ""}
+                  disabled={loading}
+                  onChange={(e) =>
+                    changePanel(member.id, e.target.value)
+                  }
+                  style={inputStyle}
+                >
+                  <option value="" disabled>เลือกแผงสมาชิก</option>
+                  <option value="reseller_300">แผงตัวแทน 300</option>
+                  <option value="reseller_1000">แผงตัวแทน 1000</option>
+                </select>
+
+                <button
+                  disabled={loading}
+                  onClick={() => changePanel(member.id, "")}
+                  style={secondaryButtonStyle}
+                >
+                  ยกเลิกแผง / ยังไม่กำหนด
+                </button>
+              </>
+            )}
+
+            <hr style={{ borderColor: "#49365f", margin: "20px 0" }} />
+
+            <label>จัดการเครดิต</label>
 
             <input
               type="number"
@@ -176,6 +258,15 @@ const buttonStyle = {
   color: "white",
   padding: "12px 18px",
   border: 0,
+  borderRadius: 8,
+  cursor: "pointer"
+};
+
+const secondaryButtonStyle = {
+  background: "#382747",
+  color: "white",
+  padding: "10px 14px",
+  border: "1px solid #76528f",
   borderRadius: 8,
   cursor: "pointer"
 };
