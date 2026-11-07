@@ -10,6 +10,8 @@ const durations = [
   "1 วัน", "3 วัน", "7 วัน", "15 วัน", "30 วัน",
 ];
 
+type PanelKey = "reseller_300" | "reseller_1000";
+
 type Product = {
   id: string;
   name: string;
@@ -39,6 +41,7 @@ export default function Dashboard() {
   const [username, setUsername] = useState("สมาชิก");
   const [points, setPoints] = useState(0);
   const [role, setRole] = useState("member");
+  const [assignedPanel, setAssignedPanel] = useState<PanelKey | null>(null);
 
   const [keysGenerated, setKeysGenerated] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
@@ -58,6 +61,13 @@ export default function Dashboard() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [showKeys, setShowKeys] = useState<string[]>([]);
 
+  const panelName =
+    assignedPanel === "reseller_300"
+      ? "แผงตัวแทน 300"
+      : assignedPanel === "reseller_1000"
+      ? "แผงตัวแทน 1000"
+      : "ยังไม่ได้รับการกำหนดแผง";
+
   const selectedPrice = prices.find(
     (item) => item.duration === duration
   );
@@ -66,34 +76,49 @@ export default function Dashboard() {
     ? selectedPrice.price_points * quantity
     : 0;
 
-  async function loadProfile() {
-    if (!supabase) return;
+  async function loadProfile(): Promise<PanelKey | null> {
+    if (!supabase) return null;
 
     const { data: auth } = await supabase.auth.getUser();
 
     if (!auth.user) {
       router.replace("/");
-      return;
+      return null;
     }
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
-      .select("username, role, points")
+      .select("username, role, points, assigned_panel")
       .eq("id", auth.user.id)
       .maybeSingle();
+
+    if (error) {
+      setMessage("โหลดข้อมูลสมาชิกไม่สำเร็จ: " + error.message);
+      return null;
+    }
 
     if (data) {
       setUsername(data.username || auth.user.email || "สมาชิก");
       setPoints(Number(data.points || 0));
       setRole(data.role || "member");
+
+      const panel =
+        data.assigned_panel === "reseller_300" ||
+        data.assigned_panel === "reseller_1000"
+          ? data.assigned_panel
+          : null;
+
+      setAssignedPanel(panel);
+      return panel;
     }
+
+    return null;
   }
 
   async function loadStats() {
     if (!supabase) return;
 
     const { data: auth } = await supabase.auth.getUser();
-
     if (!auth.user) return;
 
     const [keysResult, ordersResult] = await Promise.all([
@@ -119,38 +144,71 @@ export default function Dashboard() {
     }
   }
 
-  async function loadProducts() {
+  async function loadProducts(panel: PanelKey | null) {
     if (!supabase) return;
 
-    const { data, error } = await supabase
+    setProducts([]);
+    setProductId("");
+    setPrices([]);
+    setDuration("");
+    setStock(0);
+
+    if (!panel) {
+      setMessage("บัญชีนี้ยังไม่ได้รับการกำหนดแผง กรุณาติดต่อแอดมิน");
+      return;
+    }
+
+    const { data: productData, error: productError } = await supabase
       .from("products")
       .select("id, name, category, description")
       .eq("active", true)
       .order("name");
 
-    if (error) {
-      setMessage("โหลดสินค้าไม่สำเร็จ: " + error.message);
+    if (productError) {
+      setMessage("โหลดสินค้าไม่สำเร็จ: " + productError.message);
       return;
     }
 
-    setProducts(data || []);
+    const { data: priceData, error: priceError } = await supabase
+      .from("product_panel_duration_prices")
+      .select("product_id")
+      .eq("panel_key", panel);
 
-    if (data?.length) {
-      setProductId(data[0].id);
+    if (priceError) {
+      setMessage("โหลดข้อมูลแผงไม่สำเร็จ: " + priceError.message);
+      return;
+    }
+
+    const availableProductIds = new Set(
+      (priceData || []).map((item) => item.product_id)
+    );
+
+    const filteredProducts = (productData || []).filter((product) =>
+      availableProductIds.has(product.id)
+    );
+
+    setProducts(filteredProducts);
+
+    if (filteredProducts.length > 0) {
+      setProductId(filteredProducts[0].id);
+      setMessage("");
+    } else {
+      setMessage("ยังไม่มีสินค้าเปิดขายในแผงนี้");
     }
   }
 
-  async function loadPrices(id: string) {
-    if (!supabase || !id) return;
+  async function loadPrices(id: string, panel: PanelKey | null) {
+    if (!supabase || !id || !panel) return;
 
     setPrices([]);
     setDuration("");
     setStock(0);
 
     const { data, error } = await supabase
-      .from("product_duration_prices")
+      .from("product_panel_duration_prices")
       .select("duration, price_points")
-      .eq("product_id", id);
+      .eq("product_id", id)
+      .eq("panel_key", panel);
 
     if (error) {
       setMessage("โหลดราคาไม่สำเร็จ: " + error.message);
@@ -219,10 +277,13 @@ export default function Dashboard() {
         return;
       }
 
-      await loadProfile();
-      await loadProducts();
-      await loadHistory();
-      await loadStats();
+      const panel = await loadProfile();
+
+      await Promise.all([
+        loadProducts(panel),
+        loadHistory(),
+        loadStats(),
+      ]);
 
       setLoading(false);
     }
@@ -231,10 +292,10 @@ export default function Dashboard() {
   }, [router]);
 
   useEffect(() => {
-    if (productId) {
-      loadPrices(productId);
+    if (productId && assignedPanel) {
+      loadPrices(productId, assignedPanel);
     }
-  }, [productId]);
+  }, [productId, assignedPanel]);
 
   useEffect(() => {
     if (productId && duration) {
@@ -251,6 +312,11 @@ export default function Dashboard() {
 
   async function purchase() {
     if (!supabase || purchasing) return;
+
+    if (!assignedPanel) {
+      setMessage("บัญชีนี้ยังไม่ได้รับการกำหนดแผง");
+      return;
+    }
 
     if (!productId || !duration || !selectedPrice) {
       setMessage("กรุณาเลือกสินค้าและระยะเวลา");
@@ -288,6 +354,7 @@ export default function Dashboard() {
         p_product_id: productId,
         p_quantity: quantity,
         p_duration: duration,
+        p_panel_key: assignedPanel,
       }
     );
 
@@ -361,13 +428,16 @@ export default function Dashboard() {
           <p>ชื่อสมาชิก: {username}</p>
           <p>เครดิตคงเหลือ: {points.toLocaleString("th-TH")}</p>
           <p>สถานะบัญชี: {role}</p>
+          <p>แผงสมาชิก: <strong style={{ color: "#d69cff" }}>{panelName}</strong></p>
         </div>
 
         <div className="panel">
           <h2>ร้านค้า DUDSHOP777</h2>
 
-          {products.length === 0 ? (
-            <p>ยังไม่มีสินค้าเปิดขายในขณะนี้</p>
+          {!assignedPanel ? (
+            <p>บัญชีนี้ยังไม่ได้รับการกำหนดแผง กรุณาติดต่อแอดมิน</p>
+          ) : products.length === 0 ? (
+            <p>{message || "ยังไม่มีสินค้าเปิดขายในแผงนี้"}</p>
           ) : (
             <>
               <label>เลือกสินค้า</label>
@@ -407,7 +477,7 @@ export default function Dashboard() {
               </select>
 
               {prices.length === 0 && (
-                <p>สินค้านี้ยังไม่ได้กำหนดราคา</p>
+                <p>สินค้านี้ยังไม่ได้กำหนดราคาในแผงของคุณ</p>
               )}
 
               {selectedPrice && (
