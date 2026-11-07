@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -11,26 +11,59 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    async function checkAdmin() {
+      if (!supabase) {
+        setChecking(false);
+        return;
+      }
+
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (user) {
+        const { data } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        setIsAdmin(data?.role === "admin");
+      }
+
+      setChecking(false);
+    }
+
+    checkAdmin();
+  }, []);
 
   async function signIn() {
     if (!supabase) return setMessage("กรุณาตั้งค่า Supabase ก่อน");
     setLoading(true);
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
+
     setLoading(false);
+
     if (error) return setMessage(error.message);
+
     router.push("/dashboard");
   }
 
   async function signUp() {
     if (!supabase) return setMessage("กรุณาตั้งค่า Supabase ก่อน");
     setLoading(true);
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
     });
+
     setLoading(false);
     setMessage(error ? error.message : "สมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมล");
   }
@@ -40,9 +73,11 @@ export default function Home() {
     if (!email.trim()) return setMessage("กรุณากรอกอีเมลก่อน");
 
     setLoading(true);
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/reset-password`,
     });
+
     setLoading(false);
 
     setMessage(
@@ -58,6 +93,25 @@ export default function Home() {
         <div className="brand"><span>DUD</span>SHOP777</div>
         <span className="tag">KEY STORE</span>
       </nav>
+
+      {isAdmin && !checking && (
+        <div style={{ textAlign: "right", marginTop: 20 }}>
+          <button
+            onClick={() => router.push("/admin")}
+            style={{
+              background: "#b91c1c",
+              color: "white",
+              border: "none",
+              borderRadius: 10,
+              padding: "12px 20px",
+              fontWeight: "bold",
+              cursor: "pointer",
+            }}
+          >
+            ⚙️ จัดการร้านค้า
+          </button>
+        </div>
+      )}
 
       <section className="hero">
         <p className="eyebrow">WELCOME TO DUDSHOP777</p>
