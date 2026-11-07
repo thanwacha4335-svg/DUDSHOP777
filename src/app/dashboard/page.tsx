@@ -40,6 +40,9 @@ export default function Dashboard() {
   const [points, setPoints] = useState(0);
   const [role, setRole] = useState("member");
 
+  const [keysGenerated, setKeysGenerated] = useState(0);
+  const [totalOrders, setTotalOrders] = useState(0);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState("");
   const [prices, setPrices] = useState<Price[]>([]);
@@ -83,6 +86,36 @@ export default function Dashboard() {
       setUsername(data.username || auth.user.email || "สมาชิก");
       setPoints(Number(data.points || 0));
       setRole(data.role || "member");
+    }
+  }
+
+  async function loadStats() {
+    if (!supabase) return;
+
+    const { data: auth } = await supabase.auth.getUser();
+
+    if (!auth.user) return;
+
+    const [keysResult, ordersResult] = await Promise.all([
+      supabase
+        .from("generated_keys")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", auth.user.id),
+
+      supabase
+        .from("credit_transactions")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", auth.user.id)
+        .eq("transaction_type", "purchase")
+        .eq("status", "approved"),
+    ]);
+
+    if (!keysResult.error) {
+      setKeysGenerated(keysResult.count || 0);
+    }
+
+    if (!ordersResult.error) {
+      setTotalOrders(ordersResult.count || 0);
     }
   }
 
@@ -189,6 +222,8 @@ export default function Dashboard() {
       await loadProfile();
       await loadProducts();
       await loadHistory();
+      await loadStats();
+
       setLoading(false);
     }
 
@@ -269,6 +304,7 @@ export default function Dashboard() {
     await loadProfile();
     await loadStock(productId, duration);
     await loadHistory();
+    await loadStats();
   }
 
   async function copyKey(value: string) {
@@ -305,6 +341,20 @@ export default function Dashboard() {
         <p className="eyebrow">MEMBER DASHBOARD</p>
         <h1>WELCOME <span>BACK</span></h1>
         <p className="sub">ยินดีต้อนรับ {username}</p>
+
+        <div className="statsGrid">
+          <div className="statCard">
+            <p className="statLabel">KEY GENERATED</p>
+            <h2>{keysGenerated.toLocaleString("th-TH")}</h2>
+            <p className="statDescription">จำนวน KEY ที่สร้างทั้งหมด</p>
+          </div>
+
+          <div className="statCard">
+            <p className="statLabel">TOTAL ORDERS</p>
+            <h2>{totalOrders.toLocaleString("th-TH")}</h2>
+            <p className="statDescription">จำนวนครั้งที่สั่งซื้อทั้งหมด</p>
+          </div>
+        </div>
 
         <div className="panel">
           <h2>ข้อมูลสมาชิก</h2>
@@ -449,6 +499,51 @@ export default function Dashboard() {
       </section>
 
       <footer>© 2026 DUDSHOP777</footer>
+
+      <style jsx>{`
+        .statsGrid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+          margin: 24px 0;
+        }
+
+        .statCard {
+          background: linear-gradient(145deg, #21152f, #120f1b);
+          border: 1px solid #633b7c;
+          border-radius: 14px;
+          padding: 20px;
+          min-width: 0;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+        }
+
+        .statLabel {
+          color: #d69cff;
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 1.5px;
+          margin: 0 0 12px;
+        }
+
+        .statCard h2 {
+          color: #ffffff;
+          font-size: 32px;
+          margin: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .statDescription {
+          color: #b9a9c7;
+          font-size: 12px;
+          margin: 8px 0 0;
+        }
+
+        @media (max-width: 520px) {
+          .statsGrid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
     </main>
   );
 }
