@@ -167,22 +167,22 @@ export default function KeyGeneratorPage() {
     }
   }
 
+  // โหลดจำนวน KEY ผ่าน RPC โดยไม่เปิดเผย KEY ในคลังให้สมาชิก
   async function loadStock(id: string, selectedDuration: string) {
-    if (!supabase || !id || !selectedDuration) return;
+    if (!supabase || !id || !selectedDuration || !assignedPanel) return;
 
-    const { count, error } = await supabase
-      .from("key_inventory")
-      .select("id", { count: "exact", head: true })
-      .eq("product_id", id)
-      .eq("duration", selectedDuration)
-      .eq("used", false);
+    const { data, error } = await supabase.rpc("get_product_key_stock", {
+      p_product_id: id,
+      p_duration: selectedDuration,
+      p_panel_key: assignedPanel,
+    });
 
     if (error) {
       setMessage("โหลดสต็อกไม่สำเร็จ: " + error.message);
       return;
     }
 
-    setStock(count || 0);
+    setStock(Number(data ?? 0));
   }
 
   useEffect(() => {
@@ -219,7 +219,7 @@ export default function KeyGeneratorPage() {
     if (productId && duration) {
       loadStock(productId, duration);
     }
-  }, [productId, duration]);
+  }, [productId, duration, assignedPanel]);
 
   async function logout() {
     if (!supabase) return;
