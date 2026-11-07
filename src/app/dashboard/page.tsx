@@ -118,6 +118,22 @@ export default function Dashboard() {
           <Link href="/dashboard"><button>Dashboard</button></Link>
           <Link href="/key-generator"><button>Key Generator</button></Link>
           <Link href="/history"><button>History</button></Link>
+
+          {role === "admin" && (
+            <Link href="/admin">
+              <button
+                style={{
+                  background: "#b91c1c",
+                  color: "#fff",
+                  border: "1px solid #ef4444",
+                  fontWeight: "bold",
+                }}
+              >
+                ⚙️ Admin
+              </button>
+            </Link>
+          )}
+
           <button onClick={logout}>ออกจากระบบ</button>
         </div>
       </nav>
