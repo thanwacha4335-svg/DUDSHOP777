@@ -6,15 +6,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 const durations = [
-  "1 ชั่วโมง",
-  "3 ชั่วโมง",
-  "6 ชั่วโมง",
-  "12 ชั่วโมง",
-  "1 วัน",
-  "3 วัน",
-  "7 วัน",
-  "15 วัน",
-  "30 วัน",
+  "1 ชั่วโมง", "3 ชั่วโมง", "6 ชั่วโมง", "12 ชั่วโมง",
+  "1 วัน", "3 วัน", "7 วัน", "15 วัน", "30 วัน",
 ];
 
 type Product = {
@@ -31,8 +24,11 @@ type Price = {
 
 type GeneratedKey = {
   id: string;
+  product_id?: string;
   product_name: string;
+  duration: string;
   key_value: string;
+  price_points: number;
   created_at: string;
 };
 
@@ -42,7 +38,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [username, setUsername] = useState("สมาชิก");
   const [points, setPoints] = useState(0);
-  const [role, setRole] = useState("user");
+  const [role, setRole] = useState("member");
 
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState("");
@@ -54,6 +50,10 @@ export default function Dashboard() {
   const [purchasing, setPurchasing] = useState(false);
   const [message, setMessage] = useState("");
   const [generatedKeys, setGeneratedKeys] = useState<GeneratedKey[]>([]);
+
+  const [history, setHistory] = useState<GeneratedKey[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [showKeys, setShowKeys] = useState<string[]>([]);
 
   const selectedPrice = prices.find(
     (item) => item.duration === duration
@@ -82,7 +82,7 @@ export default function Dashboard() {
     if (data) {
       setUsername(data.username || auth.user.email || "สมาชิก");
       setPoints(Number(data.points || 0));
-      setRole(data.role || "user");
+      setRole(data.role || "member");
     }
   }
 
@@ -132,6 +132,7 @@ export default function Dashboard() {
 
     if (sorted.length) {
       setDuration(sorted[0].duration);
+      setQuantity(1);
     }
   }
 
@@ -147,7 +148,28 @@ export default function Dashboard() {
 
     if (!error) {
       setStock(count || 0);
+      setQuantity(1);
     }
+  }
+
+  async function loadHistory() {
+    if (!supabase) return;
+
+    setHistoryLoading(true);
+
+    const { data, error } = await supabase
+      .from("generated_keys")
+      .select("id, product_id, product_name, duration, key_value, price_points, created_at")
+      .order("created_at", { ascending: false });
+
+    setHistoryLoading(false);
+
+    if (error) {
+      setMessage("โหลดประวัติไม่สำเร็จ: " + error.message);
+      return;
+    }
+
+    setHistory(data || []);
   }
 
   useEffect(() => {
@@ -166,6 +188,7 @@ export default function Dashboard() {
 
       await loadProfile();
       await loadProducts();
+      await loadHistory();
       setLoading(false);
     }
 
@@ -245,6 +268,24 @@ export default function Dashboard() {
 
     await loadProfile();
     await loadStock(productId, duration);
+    await loadHistory();
+  }
+
+  async function copyKey(value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setMessage("คัดลอก KEY สำเร็จ");
+    } catch {
+      setMessage("คัดลอกไม่สำเร็จ กรุณาคัดลอกด้วยตนเอง");
+    }
+  }
+
+  function toggleKey(id: string) {
+    setShowKeys((current) =>
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id]
+    );
   }
 
   if (loading) {
@@ -268,9 +309,7 @@ export default function Dashboard() {
         <div className="panel">
           <h2>ข้อมูลสมาชิก</h2>
           <p>ชื่อสมาชิก: {username}</p>
-          <p>
-            เครดิตคงเหลือ: {points.toLocaleString("th-TH")}
-          </p>
+          <p>เครดิตคงเหลือ: {points.toLocaleString("th-TH")}</p>
           <p>สถานะบัญชี: {role}</p>
         </div>
 
@@ -298,9 +337,7 @@ export default function Dashboard() {
               </select>
 
               {products.find((p) => p.id === productId)?.description && (
-                <p>
-                  {products.find((p) => p.id === productId)?.description}
-                </p>
+                <p>{products.find((p) => p.id === productId)?.description}</p>
               )}
 
               <label>เลือกระยะเวลา</label>
@@ -325,10 +362,7 @@ export default function Dashboard() {
 
               {selectedPrice && (
                 <>
-                  <p>
-                    ราคาต่อคีย์:{" "}
-                    {selectedPrice.price_points.toLocaleString("th-TH")} เครดิต
-                  </p>
+                  <p>ราคาต่อคีย์: {selectedPrice.price_points.toLocaleString("th-TH")} เครดิต</p>
                   <p>สต็อกคงเหลือ: {stock} คีย์</p>
 
                   <label>จำนวนคีย์</label>
@@ -345,9 +379,7 @@ export default function Dashboard() {
                       ))}
                   </select>
 
-                  <h3>
-                    รวมทั้งหมด: {totalPrice.toLocaleString("th-TH")} เครดิต
-                  </h3>
+                  <h3>รวมทั้งหมด: {totalPrice.toLocaleString("th-TH")} เครดิต</h3>
 
                   <button
                     onClick={purchase}
@@ -367,33 +399,64 @@ export default function Dashboard() {
           <div className="panel">
             <h2>KEY ที่ซื้อสำเร็จ</h2>
             {generatedKeys.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  padding: 12,
-                  marginBottom: 10,
-                  background: "#211a30",
-                  borderRadius: 8,
-                  overflowWrap: "anywhere",
-                }}
-              >
+              <div key={item.id} style={keyCardStyle}>
                 <p>{item.product_name}</p>
-                <p>{duration}</p>
+                <p>{item.duration}</p>
                 <strong>{item.key_value}</strong>
-                <button
-                  onClick={() =>
-                    navigator.clipboard.writeText(item.key_value)
-                  }
-                >
+                <button onClick={() => copyKey(item.key_value)}>
                   คัดลอก KEY
                 </button>
               </div>
             ))}
           </div>
         )}
+
+        <div className="panel">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <h2>ประวัติการซื้อและ KEY</h2>
+            <button onClick={loadHistory} disabled={historyLoading}>
+              {historyLoading ? "กำลังโหลด..." : "รีเฟรช"}
+            </button>
+          </div>
+
+          {historyLoading ? (
+            <p>กำลังโหลดประวัติ...</p>
+          ) : history.length === 0 ? (
+            <p>ยังไม่มีประวัติการซื้อ</p>
+          ) : (
+            history.map((item) => (
+              <div key={item.id} style={keyCardStyle}>
+                <p><strong>{item.product_name}</strong></p>
+                <p>ระยะเวลา: {item.duration}</p>
+                <p>ราคา: {Number(item.price_points).toLocaleString("th-TH")} เครดิต</p>
+                <p>วันที่ซื้อ: {new Date(item.created_at).toLocaleString("th-TH")}</p>
+
+                <p style={{ overflowWrap: "anywhere" }}>
+                  KEY: {showKeys.includes(item.id) ? item.key_value : "••••••••••••"}
+                </p>
+
+                <button onClick={() => toggleKey(item.id)}>
+                  {showKeys.includes(item.id) ? "ซ่อน KEY" : "แสดง KEY"}
+                </button>
+
+                <button onClick={() => copyKey(item.key_value)}>
+                  คัดลอก KEY
+                </button>
+              </div>
+            ))
+          )}
+        </div>
       </section>
 
       <footer>© 2026 DUDSHOP777</footer>
     </main>
   );
 }
+
+const keyCardStyle = {
+  padding: 12,
+  marginBottom: 10,
+  background: "#211a30",
+  borderRadius: 8,
+  overflowWrap: "anywhere" as const,
+};
