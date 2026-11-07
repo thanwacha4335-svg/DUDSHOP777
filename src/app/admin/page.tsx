@@ -2,25 +2,38 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
-type Member = {
-  id: string;
-  username: string | null;
-  role: string;
-  points: number;
-  assigned_panel: string | null;
+type Stats = {
+  members: number;
+  products: number;
+  keys: number;
+  sold: number;
 };
 
 export default function AdminPage() {
-  const [members, setMembers] = useState<Member[]>([]);
-  const [search, setSearch] = useState("");
-  const [amounts, setAmounts] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState("กำลังโหลด...");
-  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [allowed, setAllowed] = useState(false);
+  const [adminName, setAdminName] = useState("");
+  const [stats, setStats] = useState<Stats>({
+    members: 0,
+    products: 0,
+    keys: 0,
+    sold: 0,
+  });
+  const [message, setMessage] = useState("");
 
-  async function loadMembers() {
-    if (!supabase) return;
+  useEffect(() => {
+    checkAdmin();
+  }, []);
+
+  async function checkAdmin() {
+    if (!supabase) {
+      setMessage("ไม่สามารถเชื่อมต่อฐานข้อมูลได้");
+      setChecking(false);
+      return;
+    }
 
     const { data: auth } = await supabase.auth.getUser();
 
@@ -29,244 +42,268 @@ export default function AdminPage() {
       return;
     }
 
-    const { data: profile } = await supabase
+    const { data: profile, error } = await supabase
       .from("profiles")
-      .select("role")
+      .select("username, role")
       .eq("id", auth.user.id)
       .single();
 
-    if (profile?.role !== "admin") {
-      setMessage("คุณไม่มีสิทธิ์เข้าถึงหน้านี้");
+    if (error || profile?.role !== "admin") {
+      setMessage("คุณไม่มีสิทธิ์เข้าถึง Admin Panel");
+      setChecking(false);
       return;
     }
 
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, username, role, points, assigned_panel")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    setMembers(data || []);
-    setMessage("");
+    setAdminName(profile.username || "Admin");
+    setAllowed(true);
+    await loadStats();
+    setChecking(false);
   }
 
-  useEffect(() => {
-    loadMembers();
-  }, []);
+  async function loadStats() {
+    if (!supabase) return;
 
-  async function adjustCredit(userId: string) {
-    if (!supabase || loading) return;
+    const [members, products, keys, sold] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .eq("role", "member"),
 
-    const amount = Number(amounts[userId]);
+      supabase
+        .from("products")
+        .select("id", { count: "exact", head: true }),
 
-    if (!Number.isSafeInteger(amount) || amount === 0) {
-      setMessage("กรุณาใส่จำนวนเครดิตที่ถูกต้อง");
-      return;
-    }
+      supabase
+        .from("key_inventory")
+        .select("id", { count: "exact", head: true })
+        .eq("used", false),
 
-    if (!window.confirm(
-      `${amount > 0 ? "เพิ่ม" : "ลด"}เครดิต ${Math.abs(amount)} เครดิต ใช่หรือไม่?`
-    )) return;
+      supabase
+        .from("generated_keys")
+        .select("id", { count: "exact", head: true }),
+    ]);
 
-    setLoading(true);
-    setMessage("");
-
-    const { data, error } = await supabase.rpc("admin_adjust_credit", {
-      p_user_id: userId,
-      p_amount: amount,
+    setStats({
+      members: members.count || 0,
+      products: products.count || 0,
+      keys: keys.count || 0,
+      sold: sold.count || 0,
     });
-
-    if (error) {
-      setMessage(error.message);
-    } else {
-      setMessage(`สำเร็จ! เครดิตคงเหลือ ${data}`);
-      setAmounts((old) => ({ ...old, [userId]: "" }));
-      await loadMembers();
-    }
-
-    setLoading(false);
   }
 
-  async function changePanel(userId: string, panel: string) {
-    if (!supabase || loading) return;
-
-    const panelName =
-      panel === "reseller_300"
-        ? "แผงตัวแทน 300"
-        : panel === "reseller_1000"
-        ? "แผงตัวแทน 1000"
-        : "ยังไม่กำหนดแผง";
-
-    if (!window.confirm(`ต้องการกำหนดสมาชิกเป็น ${panelName} ใช่หรือไม่?`)) {
-      return;
-    }
-
-    setLoading(true);
-    setMessage("");
-
-    const { error } = await supabase.rpc("admin_set_member_panel", {
-      p_user_id: userId,
-      p_panel_key: panel,
-    });
-
-    if (error) {
-      setMessage(error.message);
-    } else {
-      setMessage(`เปลี่ยนแผงเป็น ${panelName} สำเร็จ`);
-      await loadMembers();
-    }
-
-    setLoading(false);
+  async function logout() {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    window.location.href = "/";
   }
 
-  const filtered = members.filter((member) =>
-    `${member.username || ""} ${member.id}`
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
+  const menus = [
+    {
+      title: "จัดการสมาชิก",
+      description: "ค้นหาสมาชิก เพิ่มเครดิต ลดเครดิต และกำหนดแผง",
+      icon: "👥",
+      href: "/admin/members",
+    },
+    {
+      title: "จัดการสินค้า",
+      description: "เพิ่มสินค้า แก้ไขสินค้า และเปิดปิดการขาย",
+      icon: "📦",
+      href: "/admin/products",
+    },
+    {
+      title: "จัดการ KEY / สต็อก",
+      description: "เพิ่ม KEY หลายชิ้นและจัดการคลังสินค้า",
+      icon: "🔑",
+      href: "/admin/stock",
+    },
+    {
+      title: "จัดการราคา",
+      description: "ตั้งราคาแยกแผงตัวแทน 300 และ 1000",
+      icon: "🏷️",
+      href: "/admin/prices",
+    },
+  ];
+
+  if (checking) {
+    return (
+      <main style={pageStyle}>
+        <div style={centerStyle}>กำลังตรวจสอบสิทธิ์ Admin...</div>
+      </main>
+    );
+  }
+
+  if (!allowed) {
+    return (
+      <main style={pageStyle}>
+        <div style={centerStyle}>
+          <h2 style={{ color: "#ff4545" }}>ACCESS DENIED</h2>
+          <p>{message}</p>
+          <Link href="/" style={linkStyle}>กลับหน้าหลัก</Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <main style={{
-      minHeight: "100vh",
-      background: "#100d19",
-      color: "white",
-      padding: "32px 16px",
-      fontFamily: "Arial, sans-serif"
-    }}>
-      <div style={{ maxWidth: 900, margin: "auto" }}>
-        <h1 style={{ color: "#b58aff" }}>DUDSHOP777 ADMIN</h1>
-        <p>ระบบจัดการสมาชิก เครดิต และแผงตัวแทน</p>
-
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="ค้นหาชื่อสมาชิกหรือ User ID"
-          style={inputStyle}
-        />
-
-        {message && (
-          <p style={{ color: "#d8b4fe" }}>{message}</p>
-        )}
-
-        {filtered.map((member) => (
-          <section key={member.id} style={cardStyle}>
-            <h3>{member.username || "ไม่มีชื่อสมาชิก"}</h3>
-
-            <p>สิทธิ์: {member.role}</p>
-            <p>เครดิตปัจจุบัน: <b>{member.points}</b></p>
-
-            <p>
-              แผงปัจจุบัน:{" "}
-              <b style={{ color: "#c4b5fd" }}>
-                {member.assigned_panel === "reseller_300"
-                  ? "แผงตัวแทน 300"
-                  : member.assigned_panel === "reseller_1000"
-                  ? "แผงตัวแทน 1000"
-                  : "ยังไม่กำหนด"}
-              </b>
+    <main style={pageStyle}>
+      <div style={{ maxWidth: 1100, margin: "auto" }}>
+        <header style={headerStyle}>
+          <div>
+            <div style={{ color: "#ff4545", fontWeight: 900, letterSpacing: 2 }}>
+              DUDSHOP777
+            </div>
+            <h1 style={{ margin: "8px 0", fontSize: 30 }}>
+              ADMIN PANEL
+            </h1>
+            <p style={{ color: "#999", margin: 0 }}>
+              ยินดีต้อนรับ, {adminName}
             </p>
+          </div>
 
-            <p style={{ fontSize: 12, color: "#aaa" }}>
-              User ID: {member.id}
-            </p>
+          <button onClick={logout} style={logoutStyle}>
+            ออกจากระบบ
+          </button>
+        </header>
 
-            {member.role === "member" && (
-              <>
-                <label style={{ color: "#d8b4fe" }}>
-                  กำหนดแผงสมาชิก
-                </label>
+        <h2 style={sectionTitle}>ภาพรวมระบบ</h2>
 
-                <select
-                  value={member.assigned_panel || ""}
-                  disabled={loading}
-                  onChange={(e) =>
-                    changePanel(member.id, e.target.value)
-                  }
-                  style={inputStyle}
-                >
-                  <option value="" disabled>เลือกแผงสมาชิก</option>
-                  <option value="reseller_300">แผงตัวแทน 300</option>
-                  <option value="reseller_1000">แผงตัวแทน 1000</option>
-                </select>
+        <div style={statsGrid}>
+          <Stat title="สมาชิกทั้งหมด" value={stats.members} icon="👥" />
+          <Stat title="สินค้าทั้งหมด" value={stats.products} icon="📦" />
+          <Stat title="KEY คงเหลือ" value={stats.keys} icon="🔑" />
+          <Stat title="KEY ที่ขายแล้ว" value={stats.sold} icon="🛒" />
+        </div>
 
-                <button
-                  disabled={loading}
-                  onClick={() => changePanel(member.id, "")}
-                  style={secondaryButtonStyle}
-                >
-                  ยกเลิกแผง / ยังไม่กำหนด
-                </button>
-              </>
-            )}
+        <h2 style={sectionTitle}>จัดการระบบหลังบ้าน</h2>
 
-            <hr style={{ borderColor: "#49365f", margin: "20px 0" }} />
+        <div style={menuGrid}>
+          {menus.map((item) => (
+            <Link href={item.href} key={item.href} style={menuLink}>
+              <div style={{ fontSize: 34 }}>{item.icon}</div>
+              <h3 style={{ margin: "12px 0 6px", color: "white" }}>
+                {item.title}
+              </h3>
+              <p style={{ color: "#999", fontSize: 13, lineHeight: 1.6 }}>
+                {item.description}
+              </p>
+              <div style={{ color: "#ff4545", marginTop: 12, fontWeight: 700 }}>
+                เข้าจัดการ →
+              </div>
+            </Link>
+          ))}
+        </div>
 
-            <label>จัดการเครดิต</label>
-
-            <input
-              type="number"
-              value={amounts[member.id] || ""}
-              onChange={(e) =>
-                setAmounts((old) => ({
-                  ...old,
-                  [member.id]: e.target.value
-                }))
-              }
-              placeholder="จำนวนเครดิต เช่น 100 หรือ -50"
-              style={inputStyle}
-            />
-
-            <button
-              disabled={loading}
-              onClick={() => adjustCredit(member.id)}
-              style={buttonStyle}
-            >
-              เพิ่ม / ลดเครดิต
-            </button>
-          </section>
-        ))}
+        <div style={footerStyle}>
+          DUDSHOP777 CONTROL CENTER
+          <span style={{ color: "#777", display: "block", marginTop: 6 }}>
+            ระบบจัดการสำหรับผู้ดูแลเท่านั้น
+          </span>
+        </div>
       </div>
     </main>
   );
 }
 
-const inputStyle = {
-  width: "100%",
-  boxSizing: "border-box" as const,
-  padding: 12,
-  margin: "10px 0",
-  borderRadius: 8,
-  border: "1px solid #51436b",
-  background: "#211a30",
-  color: "white"
+function Stat({
+  title,
+  value,
+  icon,
+}: {
+  title: string;
+  value: number;
+  icon: string;
+}) {
+  return (
+    <div style={statCard}>
+      <div style={{ fontSize: 25 }}>{icon}</div>
+      <div style={{ color: "#999", fontSize: 13, marginTop: 12 }}>
+        {title}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 900, marginTop: 5 }}>
+        {value.toLocaleString("th-TH")}
+      </div>
+    </div>
+  );
+}
+
+const pageStyle = {
+  minHeight: "100vh",
+  background: "#090909",
+  color: "white",
+  padding: "32px 18px",
+  fontFamily: "Arial, sans-serif",
 };
 
-const cardStyle = {
-  background: "#1b1528",
-  border: "1px solid #49365f",
+const centerStyle = {
+  maxWidth: 500,
+  margin: "100px auto",
+  textAlign: "center" as const,
+};
+
+const headerStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 16,
+  flexWrap: "wrap" as const,
+  borderBottom: "1px solid #292929",
+  paddingBottom: 25,
+};
+
+const sectionTitle = {
+  fontSize: 19,
+  marginTop: 32,
+  marginBottom: 16,
+};
+
+const statsGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+  gap: 14,
+};
+
+const statCard = {
+  background: "#151515",
+  border: "1px solid #292929",
   borderRadius: 12,
   padding: 18,
-  marginTop: 16
 };
 
-const buttonStyle = {
-  background: "#8b5cf6",
-  color: "white",
-  padding: "12px 18px",
-  border: 0,
-  borderRadius: 8,
-  cursor: "pointer"
+const menuGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gap: 16,
 };
 
-const secondaryButtonStyle = {
-  background: "#382747",
-  color: "white",
-  padding: "10px 14px",
-  border: "1px solid #76528f",
+const menuLink = {
+  display: "block",
+  textDecoration: "none",
+  background: "#151515",
+  border: "1px solid #333",
+  borderRadius: 14,
+  padding: 20,
+  transition: "0.2s",
+};
+
+const logoutStyle = {
+  background: "#241010",
+  border: "1px solid #a52b2b",
+  color: "#ff6666",
   borderRadius: 8,
-  cursor: "pointer"
+  padding: "11px 16px",
+  cursor: "pointer",
+};
+
+const linkStyle = {
+  color: "#ff4545",
+};
+
+const footerStyle = {
+  textAlign: "center" as const,
+  color: "#ff4545",
+  fontSize: 12,
+  letterSpacing: 2,
+  marginTop: 45,
+  padding: 20,
+  borderTop: "1px solid #292929",
 };
