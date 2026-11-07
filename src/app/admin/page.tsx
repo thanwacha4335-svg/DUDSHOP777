@@ -28,6 +28,7 @@ type StockItem = {
   id: string;
   product_id: string;
   duration: string;
+  key_value: string;
   used: boolean;
 };
 
@@ -130,7 +131,10 @@ export default function AdminPage() {
     if (allowed) {
       if (tab === "members") loadMembers();
       if (tab === "products") loadProducts();
-      if (tab === "stock") loadStock();
+      if (tab === "stock") {
+        loadProducts();
+        loadStock();
+      }
       if (tab === "prices") loadProducts();
       if (tab === "sales") loadSales();
     }
@@ -140,7 +144,6 @@ export default function AdminPage() {
     if (allowed && priceProduct) loadPrices(priceProduct, pricePanel);
   }, [priceProduct, pricePanel, allowed]);
 
-  // ล้าง URL ตัวอย่างรูปเมื่อเปลี่ยนรูปหรือออกจากหน้า
   useEffect(() => {
     return () => {
       if (imagePreview.startsWith("blob:")) {
@@ -449,7 +452,7 @@ export default function AdminPage() {
 
     const { data, error } = await supabase
       .from("key_inventory")
-      .select("id, product_id, duration, used")
+      .select("id, product_id, duration, key_value, used")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -501,6 +504,51 @@ export default function AdminPage() {
 
     setKeyText("");
     setMessage(`เพิ่ม KEY สำเร็จ ${keys.length} รายการ`);
+    await loadStock();
+    await loadOverview();
+  }
+
+  // ระบบลบ KEY ที่ยังไม่ถูกขาย
+  async function deleteKey(item: StockItem) {
+    if (!supabase || loading) return;
+
+    if (item.used) {
+      setMessage("ไม่สามารถลบ KEY ที่ถูกใช้งานแล้วได้");
+      return;
+    }
+
+    const product = products.find((p) => p.id === item.product_id);
+
+    const confirmed = window.confirm(
+      `ยืนยันลบ KEY นี้ใช่หรือไม่?\nสินค้า: ${product?.name || "-"}\nระยะเวลา: ${item.duration}\n\nการลบนี้ไม่สามารถย้อนกลับได้`
+    );
+
+    if (!confirmed) return;
+
+    setLoading(true);
+    setMessage("");
+
+    const { data, error } = await supabase
+      .from("key_inventory")
+      .delete()
+      .eq("id", item.id)
+      .eq("used", false)
+      .select("id");
+
+    setLoading(false);
+
+    if (error) {
+      setMessage(`ลบ KEY ไม่สำเร็จ: ${error.message}`);
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      setMessage("ไม่พบ KEY นี้ หรือ KEY ถูกใช้งานไปแล้ว");
+      await loadStock();
+      return;
+    }
+
+    setMessage("ลบ KEY สำเร็จแล้ว");
     await loadStock();
     await loadOverview();
   }
@@ -603,6 +651,10 @@ export default function AdminPage() {
 
   const filteredMembers = members.filter((m) =>
     `${m.username || ""} ${m.id}`.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const availableStock = stock.filter(
+    (item) => item.product_id === stockProduct && !item.used
   );
 
   function menuButton(id: Tab, label: string, icon: string) {
@@ -944,6 +996,7 @@ export default function AdminPage() {
               </div>
 
               <h3>สรุปสต็อกแยกตามระยะเวลา</h3>
+
               {products.filter((p) => p.id === stockProduct).map((product) => (
                 <div key={product.id}>
                   <p>{product.name}</p>
@@ -959,6 +1012,53 @@ export default function AdminPage() {
                   })}
                 </div>
               ))}
+
+              <div style={{ marginTop: 28 }}>
+                <h3>🗑️ รายการ KEY ในคลังสินค้า</h3>
+                <p style={muted}>
+                  แสดงเฉพาะ KEY ที่ยังไม่ถูกขาย สามารถลบรายการที่เพิ่มผิดได้
+                </p>
+
+                {availableStock.map((item) => (
+                  <div key={item.id} style={cardStyle}>
+                    <div style={{ color: "#aaa", fontSize: 12 }}>
+                      {products.find((p) => p.id === item.product_id)?.name || "สินค้า"}
+                    </div>
+
+                    <div style={{ color: "#ff7777", margin: "8px 0" }}>
+                      ระยะเวลา: {item.duration}
+                    </div>
+
+                    <div
+                      style={{
+                        background: "#080808",
+                        border: "1px solid #333",
+                        borderRadius: 8,
+                        padding: 12,
+                        fontFamily: "monospace",
+                        wordBreak: "break-all",
+                        marginBottom: 12,
+                      }}
+                    >
+                      {item.key_value}
+                    </div>
+
+                    <button
+                      style={{ ...buttonStyle, background: "#991b1b" }}
+                      disabled={loading}
+                      onClick={() => deleteKey(item)}
+                    >
+                      {loading ? "กำลังดำเนินการ..." : "🗑️ ลบ KEY นี้"}
+                    </button>
+                  </div>
+                ))}
+
+                {availableStock.length === 0 && (
+                  <div style={cardStyle}>
+                    <p style={muted}>ไม่มี KEY คงเหลือในสินค้านี้</p>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
