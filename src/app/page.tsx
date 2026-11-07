@@ -13,48 +13,42 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   async function signIn() {
-    if (!supabase) {
-      setMessage("กรุณาตั้งค่า Supabase ก่อน");
-      return;
-    }
-
+    if (!supabase) return setMessage("กรุณาตั้งค่า Supabase ก่อน");
     setLoading(true);
-    setMessage("");
-
     const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
+      email,
       password,
     });
-
     setLoading(false);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
+    if (error) return setMessage(error.message);
     router.push("/dashboard");
   }
 
   async function signUp() {
-    if (!supabase) {
-      setMessage("กรุณาตั้งค่า Supabase ก่อน");
-      return;
-    }
-
+    if (!supabase) return setMessage("กรุณาตั้งค่า Supabase ก่อน");
     setLoading(true);
-    setMessage("");
-
     const { error } = await supabase.auth.signUp({
-      email: email.trim(),
+      email,
       password,
     });
-
     setLoading(false);
+    setMessage(error ? error.message : "สมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมล");
+  }
+
+  async function forgotPassword() {
+    if (!supabase) return setMessage("กรุณาตั้งค่า Supabase ก่อน");
+    if (!email.trim()) return setMessage("กรุณากรอกอีเมลก่อน");
+
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setLoading(false);
+
     setMessage(
       error
         ? error.message
-        : "สมัครสมาชิกสำเร็จ หากระบบขอให้ยืนยันอีเมล กรุณาตรวจสอบอีเมลก่อนเข้าสู่ระบบ"
+        : "ส่งลิงก์ตั้งรหัสผ่านใหม่แล้ว กรุณาตรวจสอบอีเมล"
     );
   }
 
@@ -93,17 +87,21 @@ export default function Home() {
 
           <div className="actions">
             <button onClick={signIn} disabled={loading}>
-              {loading ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
+              เข้าสู่ระบบ
             </button>
-
-            <button
-              className="secondary"
-              onClick={signUp}
-              disabled={loading}
-            >
+            <button className="secondary" onClick={signUp} disabled={loading}>
               สมัครสมาชิก
             </button>
           </div>
+
+          <button
+            className="secondary"
+            onClick={forgotPassword}
+            disabled={loading}
+            style={{ marginTop: 12, width: "100%" }}
+          >
+            ลืมรหัสผ่าน?
+          </button>
 
           {message && <p className="message">{message}</p>}
         </div>
