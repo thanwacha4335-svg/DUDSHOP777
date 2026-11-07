@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Tab = "home" | "members" | "products" | "stock" | "prices" | "sales";
@@ -21,6 +21,7 @@ type Product = {
   description: string;
   price_points: number;
   active: boolean;
+  image_url: string | null;
 };
 
 type StockItem = {
@@ -100,6 +101,12 @@ export default function AdminPage() {
   const [description, setDescription] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // ระบบรูปสินค้า
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState("");
+  const [currentImageUrl, setCurrentImageUrl] = useState("");
+  const [removeImage, setRemoveImage] = useState(false);
+
   const [stockProduct, setStockProduct] = useState("");
   const [stockDuration, setStockDuration] = useState("1 ชั่วโมง");
   const [keyText, setKeyText] = useState("");
@@ -132,6 +139,15 @@ export default function AdminPage() {
   useEffect(() => {
     if (allowed && priceProduct) loadPrices(priceProduct, pricePanel);
   }, [priceProduct, pricePanel, allowed]);
+
+  // ล้าง URL ตัวอย่างรูปเมื่อเปลี่ยนรูปหรือออกจากหน้า
+  useEffect(() => {
+    return () => {
+      if (imagePreview.startsWith("blob:")) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
 
   async function checkAdmin() {
     if (!supabase) {
@@ -272,7 +288,7 @@ export default function AdminPage() {
       return;
     }
 
-    setProducts(data || []);
+    setProducts((data || []) as Product[]);
 
     if (data?.length) {
       setStockProduct((old) => old || data[0].id);
@@ -285,6 +301,64 @@ export default function AdminPage() {
     setCategory("");
     setDescription("");
     setEditingId(null);
+    setImageFile(null);
+    setImagePreview("");
+    setCurrentImageUrl("");
+    setRemoveImage(false);
+  }
+
+  function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+
+    if (!file) return;
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+
+    if (!allowedTypes.includes(file.type)) {
+      setMessage("รองรับเฉพาะไฟล์ JPG, PNG และ WebP");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setMessage("รูปภาพต้องมีขนาดไม่เกิน 5 MB");
+      return;
+    }
+
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setRemoveImage(false);
+    setMessage("");
+  }
+
+  async function uploadProductImage(): Promise<string | null> {
+    if (!supabase || !imageFile) return null;
+
+    const extension = imageFile.type === "image/jpeg"
+      ? "jpg"
+      : imageFile.type === "image/png"
+        ? "png"
+        : "webp";
+
+    const filePath = `products/${crypto.randomUUID()}.${extension}`;
+
+    const { error } = await supabase.storage
+      .from("product-images")
+      .upload(filePath, imageFile, {
+        cacheControl: "3600",
+        contentType: imageFile.type,
+        upsert: false,
+      });
+
+    if (error) {
+      throw new Error(`อัปโหลดรูปไม่สำเร็จ: ${error.message}`);
+    }
+
+    const { data } = supabase.storage
+      .from("product-images")
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
   }
 
   async function saveProduct() {
@@ -296,29 +370,44 @@ export default function AdminPage() {
     }
 
     setLoading(true);
+    setMessage("");
 
-    const data = {
-      name: productName.trim(),
-      category: category.trim(),
-      description: description.trim(),
-      price_points: 0,
-    };
+    try {
+      let imageUrl: string | null = currentImageUrl || null;
 
-    const result = editingId
-      ? await supabase.from("products").update(data).eq("id", editingId)
-      : await supabase.from("products").insert({ ...data, active: true });
+      if (imageFile) {
+        imageUrl = await uploadProductImage();
+      } else if (removeImage) {
+        imageUrl = null;
+      }
 
-    setLoading(false);
+      const data = {
+        name: productName.trim(),
+        category: category.trim(),
+        description: description.trim(),
+        price_points: 0,
+        image_url: imageUrl,
+      };
 
-    if (result.error) {
-      setMessage(result.error.message);
-      return;
+      const result = editingId
+        ? await supabase.from("products").update(data).eq("id", editingId)
+        : await supabase.from("products").insert({ ...data, active: true });
+
+      if (result.error) {
+        setMessage(result.error.message);
+        setLoading(false);
+        return;
+      }
+
+      setMessage(editingId ? "แก้ไขสินค้าสำเร็จ" : "เพิ่มสินค้าสำเร็จ");
+      clearProductForm();
+      await loadProducts();
+      await loadOverview();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "เกิดข้อผิดพลาด");
     }
 
-    setMessage(editingId ? "แก้ไขสินค้าสำเร็จ" : "เพิ่มสินค้าสำเร็จ");
-    clearProductForm();
-    await loadProducts();
-    await loadOverview();
+    setLoading(false);
   }
 
   function editProduct(product: Product) {
@@ -326,7 +415,12 @@ export default function AdminPage() {
     setProductName(product.name);
     setCategory(product.category);
     setDescription(product.description || "");
+    setCurrentImageUrl(product.image_url || "");
+    setImageFile(null);
+    setImagePreview("");
+    setRemoveImage(false);
     setMessage("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function toggleProduct(product: Product) {
@@ -679,30 +773,131 @@ export default function AdminPage() {
                 <h3>{editingId ? "แก้ไขสินค้า" : "เพิ่มสินค้าใหม่"}</h3>
 
                 <label>ชื่อสินค้า</label>
-                <input style={inputStyle} value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="ชื่อสินค้า" />
+                <input
+                  style={inputStyle}
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  placeholder="ชื่อสินค้า"
+                />
 
                 <label>หมวดหมู่</label>
-                <input style={inputStyle} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="เช่น iOS, Android" />
+                <input
+                  style={inputStyle}
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="เช่น iOS, Android"
+                />
 
                 <label>รายละเอียด</label>
-                <textarea style={{ ...inputStyle, minHeight: 85 }} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="รายละเอียดสินค้า" />
+                <textarea
+                  style={{ ...inputStyle, minHeight: 85 }}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="รายละเอียดสินค้า"
+                />
 
-                <button style={buttonStyle} disabled={loading} onClick={saveProduct}>
+                <label>รูปสินค้า (JPG / PNG / WebP ไม่เกิน 5 MB)</label>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleImageChange}
+                  style={{
+                    ...inputStyle,
+                    padding: 10,
+                  }}
+                />
+
+                {(imagePreview || currentImageUrl) && (
+                  <div style={{ marginBottom: 15 }}>
+                    <p style={muted}>ตัวอย่างรูปสินค้า</p>
+                    <img
+                      src={imagePreview || currentImageUrl}
+                      alt="ตัวอย่างรูปสินค้า"
+                      style={{
+                        width: "100%",
+                        maxWidth: 280,
+                        height: 190,
+                        objectFit: "contain",
+                        background: "#080808",
+                        border: "1px solid #383838",
+                        borderRadius: 10,
+                      }}
+                    />
+                  </div>
+                )}
+
+                {(imagePreview || currentImageUrl) && (
+                  <button
+                    type="button"
+                    style={{ ...cancelButton, margin: "0 0 15px" }}
+                    onClick={() => {
+                      setImageFile(null);
+                      setImagePreview("");
+                      setCurrentImageUrl("");
+                      setRemoveImage(true);
+                    }}
+                  >
+                    ลบรูปสินค้า
+                  </button>
+                )}
+
+                <button
+                  style={buttonStyle}
+                  disabled={loading}
+                  onClick={saveProduct}
+                >
                   {loading ? "กำลังบันทึก..." : editingId ? "บันทึกการแก้ไข" : "เพิ่มสินค้า"}
                 </button>
 
                 {editingId && (
-                  <button style={cancelButton} onClick={clearProductForm}>ยกเลิก</button>
+                  <button
+                    style={cancelButton}
+                    disabled={loading}
+                    onClick={clearProductForm}
+                  >
+                    ยกเลิก
+                  </button>
                 )}
               </div>
 
               <h3>รายการสินค้าทั้งหมด</h3>
+
               {products.map((product) => (
                 <div key={product.id} style={cardStyle}>
+                  {product.image_url ? (
+                    <img
+                      src={product.image_url}
+                      alt={product.name}
+                      loading="lazy"
+                      style={{
+                        width: "100%",
+                        maxWidth: 220,
+                        height: 150,
+                        objectFit: "contain",
+                        background: "#080808",
+                        border: "1px solid #333",
+                        borderRadius: 10,
+                        marginBottom: 12,
+                      }}
+                    />
+                  ) : (
+                    <div style={noImageStyle}>
+                      ยังไม่มีรูปสินค้า
+                    </div>
+                  )}
+
                   <h3>{product.name}</h3>
                   <p style={muted}>{product.category}</p>
                   <p>สถานะ: {product.active ? "กำลังขาย" : "ปิดการขาย"}</p>
-                  <button style={buttonStyle} onClick={() => editProduct(product)}>แก้ไข</button>
+
+                  <button
+                    style={buttonStyle}
+                    disabled={loading}
+                    onClick={() => editProduct(product)}
+                  >
+                    แก้ไข
+                  </button>
+
                   <button
                     style={product.active ? cancelButton : buttonStyle}
                     disabled={loading}
@@ -940,4 +1135,19 @@ const logoutStyle: React.CSSProperties = {
   width: "100%",
   background: "#351313",
   border: "1px solid #7f1d1d",
+};
+
+const noImageStyle: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 220,
+  height: 150,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#080808",
+  border: "1px dashed #444",
+  borderRadius: 10,
+  color: "#777",
+  fontSize: 13,
+  marginBottom: 12,
 };
