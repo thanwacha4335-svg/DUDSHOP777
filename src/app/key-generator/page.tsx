@@ -64,6 +64,7 @@ export default function KeyGeneratorPage() {
     if (!supabase) return null;
 
     const { data: auth } = await supabase.auth.getUser();
+
     if (!auth.user) {
       router.replace("/");
       return null;
@@ -142,6 +143,7 @@ export default function KeyGeneratorPage() {
     setPrices([]);
     setDuration("");
     setStock(0);
+    setQuantity(1);
 
     const { data, error } = await supabase
       .from("product_panel_duration_prices")
@@ -162,7 +164,6 @@ export default function KeyGeneratorPage() {
 
     if (sorted.length > 0) {
       setDuration(sorted[0].duration);
-      setQuantity(1);
     }
   }
 
@@ -176,10 +177,12 @@ export default function KeyGeneratorPage() {
       .eq("duration", selectedDuration)
       .eq("used", false);
 
-    if (!error) {
-      setStock(count || 0);
-      setQuantity(1);
+    if (error) {
+      setMessage("โหลดสต็อกไม่สำเร็จ: " + error.message);
+      return;
     }
+
+    setStock(count || 0);
   }
 
   useEffect(() => {
@@ -237,7 +240,7 @@ export default function KeyGeneratorPage() {
       return;
     }
 
-    if (quantity < 1 || quantity > 10) {
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
       setMessage("จำนวนคีย์ต้องอยู่ระหว่าง 1 ถึง 10");
       return;
     }
@@ -262,28 +265,40 @@ export default function KeyGeneratorPage() {
     setMessage("");
     setGeneratedKeys([]);
 
-    const { data, error } = await supabase.rpc(
-      "generate_product_keys",
-      {
-        p_product_id: productId,
-        p_quantity: quantity,
-        p_duration: duration,
-        p_panel_key: assignedPanel,
+    try {
+      const { data, error } = await supabase.rpc(
+        "generate_product_keys",
+        {
+          p_product_id: productId,
+          p_quantity: quantity,
+          p_duration: duration,
+          p_panel_key: assignedPanel,
+        }
+      );
+
+      if (error) {
+        setMessage("ซื้อไม่สำเร็จ: " + error.message);
+        return;
       }
-    );
 
-    setPurchasing(false);
+      if (!data || data.length === 0) {
+        setMessage("ระบบไม่พบ KEY ที่สร้าง กรุณาติดต่อแอดมิน");
+        return;
+      }
 
-    if (error) {
-      setMessage(error.message);
-      return;
+      setGeneratedKeys(data);
+      setMessage("ซื้อสำเร็จ!");
+
+      await loadProfile();
+      await loadStock(productId, duration);
+    } catch (error) {
+      setMessage(
+        "เกิดข้อผิดพลาด: " +
+          (error instanceof Error ? error.message : "ไม่ทราบสาเหตุ")
+      );
+    } finally {
+      setPurchasing(false);
     }
-
-    setGeneratedKeys(data || []);
-    setMessage("ซื้อสำเร็จ!");
-
-    await loadProfile();
-    await loadStock(productId, duration);
   }
 
   async function copyKey(value: string) {
@@ -413,18 +428,30 @@ export default function KeyGeneratorPage() {
 
               {selectedPrice && (
                 <>
-                  <label>จำนวน KEY</label>
+                  <label>จำนวน KEY (กรอกได้ 1–10)</label>
                   <div className="selectWrap">
-                    <select
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      step="1"
                       value={quantity}
-                      onChange={(e) => setQuantity(Number(e.target.value))}
-                    >
-                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-                        .filter((n) => n <= stock)
-                        .map((n) => (
-                          <option key={n} value={n}>{n} KEY</option>
-                        ))}
-                    </select>
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setQuantity(value === "" ? 0 : Number(value));
+                      }}
+                      placeholder="กรอกจำนวน KEY"
+                      style={{
+                        width: "100%",
+                        color: "white",
+                        background: "#1b1b20",
+                        border: "1px solid #393940",
+                        borderRadius: "9px",
+                        padding: "14px",
+                        outline: "none",
+                        fontSize: "14px",
+                      }}
+                    />
                   </div>
 
                   <div className="stockLine">
@@ -441,7 +468,7 @@ export default function KeyGeneratorPage() {
                     </div>
                     <div>
                       <span>จำนวน</span>
-                      <strong>{quantity} KEY</strong>
+                      <strong>{quantity || 0} KEY</strong>
                     </div>
                     <div className="totalLine">
                       <span>ยอดชำระทั้งหมด</span>
@@ -452,7 +479,14 @@ export default function KeyGeneratorPage() {
                   <button
                     className="buyButton"
                     onClick={purchase}
-                    disabled={purchasing || stock < 1 || quantity > stock}
+                    disabled={
+                      purchasing ||
+                      stock < 1 ||
+                      !Number.isInteger(quantity) ||
+                      quantity < 1 ||
+                      quantity > 10 ||
+                      quantity > stock
+                    }
                   >
                     {purchasing ? "กำลังดำเนินการ..." : "BUY NOW — ซื้อสินค้า"}
                   </button>
