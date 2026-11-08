@@ -73,15 +73,21 @@ export default function AdminProducts() {
   async function saveProduct() {
     if (!supabase || loading) return;
 
-    const priceNumber = Number(price);
-
     if (!name.trim() || !category.trim()) {
       setMessage("กรุณากรอกชื่อสินค้าและหมวดหมู่");
       return;
     }
 
-    if (!Number.isSafeInteger(priceNumber) || priceNumber < 0) {
-      setMessage("กรุณากรอกราคาเครดิตเป็นจำนวนเต็มที่ถูกต้อง");
+    // รองรับทศนิยมสูงสุด 2 ตำแหน่ง
+    if (!/^\d+(\.\d{1,2})?$/.test(price.trim())) {
+      setMessage("กรุณากรอกราคาให้ถูกต้อง เช่น 10.50");
+      return;
+    }
+
+    const priceNumber = Number(price);
+
+    if (!Number.isFinite(priceNumber) || priceNumber < 0) {
+      setMessage("ราคาไม่ถูกต้อง");
       return;
     }
 
@@ -107,7 +113,7 @@ export default function AdminProducts() {
     setLoading(false);
 
     if (result.error) {
-      setMessage(result.error.message);
+      setMessage("บันทึกไม่สำเร็จ: " + result.error.message);
       return;
     }
 
@@ -121,7 +127,7 @@ export default function AdminProducts() {
     setName(product.name);
     setCategory(product.category);
     setDescription(product.description || "");
-    setPrice(String(product.price_points));
+    setPrice(Number(product.price_points).toFixed(2));
     setMessage("");
   }
 
@@ -168,23 +174,27 @@ export default function AdminProducts() {
   };
 
   return (
-    <main style={{
-      minHeight: "100vh",
-      background: "#100d19",
-      color: "white",
-      padding: 24,
-      fontFamily: "Arial, sans-serif",
-    }}>
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#100d19",
+        color: "white",
+        padding: 24,
+        fontFamily: "Arial, sans-serif",
+      }}
+    >
       <div style={{ maxWidth: 900, margin: "auto" }}>
         <h1 style={{ color: "#b58aff" }}>DUDSHOP777</h1>
         <h2>จัดการสินค้า</h2>
 
-        <section style={{
-          background: "#1b1528",
-          padding: 20,
-          borderRadius: 12,
-          border: "1px solid #49365f",
-        }}>
+        <section
+          style={{
+            background: "#1b1528",
+            padding: 20,
+            borderRadius: 12,
+            border: "1px solid #49365f",
+          }}
+        >
           <h3>{editingId ? "แก้ไขสินค้า" : "เพิ่มสินค้าใหม่"}</h3>
 
           <label>ชื่อสินค้า</label>
@@ -216,18 +226,26 @@ export default function AdminProducts() {
             style={inputStyle}
             type="number"
             min="0"
-            step="1"
+            step="0.01"
             value={price}
             onChange={(e) => setPrice(e.target.value)}
-            placeholder="เช่น 100"
+            placeholder="เช่น 10.50"
           />
+
+          <p style={{ color: "#b9a8d5", fontSize: 13 }}>
+            รองรับราคา 2 ตำแหน่งทศนิยม เช่น 10.50 เครดิต
+          </p>
 
           <button
             style={buttonStyle}
             onClick={saveProduct}
             disabled={loading}
           >
-            {loading ? "กำลังบันทึก..." : editingId ? "บันทึกการแก้ไข" : "เพิ่มสินค้า"}
+            {loading
+              ? "กำลังบันทึก..."
+              : editingId
+                ? "บันทึกการแก้ไข"
+                : "เพิ่มสินค้า"}
           </button>
 
           {editingId && (
@@ -242,16 +260,21 @@ export default function AdminProducts() {
         <h2 style={{ marginTop: 30 }}>รายการสินค้าทั้งหมด</h2>
 
         {products.map((product) => (
-          <section key={product.id} style={{
-            background: "#1b1528",
-            border: "1px solid #49365f",
-            borderRadius: 12,
-            padding: 18,
-            marginTop: 12,
-          }}>
+          <section
+            key={product.id}
+            style={{
+              background: "#1b1528",
+              border: "1px solid #49365f",
+              borderRadius: 12,
+              padding: 18,
+              marginTop: 12,
+            }}
+          >
             <h3>{product.name}</h3>
             <p>หมวดหมู่: {product.category}</p>
-            <p>ราคา: {product.price_points} เครดิต</p>
+            <p>
+              ราคา: {Number(product.price_points).toFixed(2)} เครดิต
+            </p>
             <p>สถานะ: {product.active ? "กำลังขาย" : "ปิดการขาย"}</p>
 
             <button
