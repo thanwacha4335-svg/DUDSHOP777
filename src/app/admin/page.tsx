@@ -102,7 +102,6 @@ export default function AdminPage() {
   const [description, setDescription] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // ระบบรูปสินค้า
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState("");
   const [currentImageUrl, setCurrentImageUrl] = useState("");
@@ -141,7 +140,9 @@ export default function AdminPage() {
   }, [tab, allowed]);
 
   useEffect(() => {
-    if (allowed && priceProduct) loadPrices(priceProduct, pricePanel);
+    if (allowed && priceProduct) {
+      loadPrices(priceProduct, pricePanel);
+    }
   }, [priceProduct, pricePanel, allowed]);
 
   useEffect(() => {
@@ -508,7 +509,6 @@ export default function AdminPage() {
     await loadOverview();
   }
 
-  // ระบบลบ KEY ที่ยังไม่ถูกขาย
   async function deleteKey(item: StockItem) {
     if (!supabase || loading) return;
 
@@ -576,20 +576,31 @@ export default function AdminPage() {
     setPrices(next);
   }
 
+  // รองรับราคาทศนิยมสูงสุด 2 ตำแหน่ง
   async function savePrices() {
     if (!supabase || !priceProduct || loading) return;
 
-    const rows = [];
+    const rows: {
+      product_id: string;
+      panel_key: string;
+      duration: string;
+      price_points: number;
+    }[] = [];
 
     for (const duration of durations) {
       const value = prices[duration];
 
       if (value === undefined || value.trim() === "") continue;
 
+      if (!/^\d+(\.\d{1,2})?$/.test(value.trim())) {
+        setMessage("กรุณากรอกราคา เช่น 10.50 (ทศนิยมไม่เกิน 2 ตำแหน่ง)");
+        return;
+      }
+
       const price = Number(value);
 
-      if (!Number.isInteger(price) || price < 0) {
-        setMessage("กรุณากรอกราคาเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป");
+      if (!Number.isFinite(price) || price < 0) {
+        setMessage("กรุณากรอกราคาเป็นตัวเลขตั้งแต่ 0 ขึ้นไป");
         return;
       }
 
@@ -607,6 +618,7 @@ export default function AdminPage() {
     }
 
     setLoading(true);
+    setMessage("");
 
     const { error } = await supabase
       .from("product_panel_duration_prices")
@@ -617,7 +629,7 @@ export default function AdminPage() {
     setLoading(false);
 
     if (error) {
-      setMessage(error.message);
+      setMessage("บันทึกราคาไม่สำเร็จ: " + error.message);
       return;
     }
 
@@ -853,10 +865,7 @@ export default function AdminPage() {
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   onChange={handleImageChange}
-                  style={{
-                    ...inputStyle,
-                    padding: 10,
-                  }}
+                  style={{ ...inputStyle, padding: 10 }}
                 />
 
                 {(imagePreview || currentImageUrl) && (
@@ -933,9 +942,7 @@ export default function AdminPage() {
                       }}
                     />
                   ) : (
-                    <div style={noImageStyle}>
-                      ยังไม่มีรูปสินค้า
-                    </div>
+                    <div style={noImageStyle}>ยังไม่มีรูปสินค้า</div>
                   )}
 
                   <h3>{product.name}</h3>
@@ -1078,22 +1085,32 @@ export default function AdminPage() {
               </select>
 
               <h3>กำหนดราคาแต่ละระยะเวลา</h3>
+
               {durations.map((d) => (
                 <div key={d}>
                   <label>{d}</label>
                   <input
                     type="number"
                     min="0"
-                    step="1"
+                    step="0.01"
                     style={inputStyle}
-                    placeholder="กรอกราคาเครดิต"
+                    placeholder="เช่น 10.50"
                     value={prices[d] ?? ""}
-                    onChange={(e) => setPrices((old) => ({ ...old, [d]: e.target.value }))}
+                    onChange={(e) =>
+                      setPrices((old) => ({
+                        ...old,
+                        [d]: e.target.value,
+                      }))
+                    }
                   />
                 </div>
               ))}
 
-              <button style={buttonStyle} disabled={loading || !priceProduct} onClick={savePrices}>
+              <button
+                style={buttonStyle}
+                disabled={loading || !priceProduct}
+                onClick={savePrices}
+              >
                 {loading ? "กำลังบันทึก..." : "บันทึกราคา"}
               </button>
             </div>
@@ -1110,7 +1127,7 @@ export default function AdminPage() {
                 <div key={sale.id} style={cardStyle}>
                   <b>{sale.product_name}</b>
                   <p>ระยะเวลา: {sale.duration}</p>
-                  <p>ราคา: {sale.price_points} เครดิต</p>
+                  <p>ราคา: {Number(sale.price_points).toFixed(2)} เครดิต</p>
                   <p>แผง: {sale.panel_key === "reseller_300" ? "300" : sale.panel_key === "reseller_1000" ? "1000" : "-"}</p>
                   <p style={smallText}>{new Date(sale.created_at).toLocaleString("th-TH")}</p>
                 </div>
