@@ -122,6 +122,13 @@ export default function AdminPage() {
     sold: 0,
   });
 
+  // ยอดขายรวม
+  const [salesSummary, setSalesSummary] = useState({
+    today: 0,
+    week: 0,
+    month: 0,
+  });
+
   useEffect(() => {
     checkAdmin();
   }, []);
@@ -186,6 +193,108 @@ export default function AdminPage() {
     setChecking(false);
   }
 
+  // แปลงวันที่เป็นวันที่ประเทศไทย
+  function getBangkokDate(date: Date) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Bangkok",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+
+    const year = parts.find((p) => p.type === "year")?.value || "";
+    const month = parts.find((p) => p.type === "month")?.value || "";
+    const day = parts.find((p) => p.type === "day")?.value || "";
+
+    return `${year}-${month}-${day}`;
+  }
+
+  // โหลดสรุปยอดขายวันนี้ สัปดาห์นี้ และเดือนนี้
+  async function loadSalesSummary() {
+    if (!supabase) return;
+
+    try {
+      const now = new Date();
+      const today = getBangkokDate(now);
+      const [year, month, day] = today.split("-").map(Number);
+
+      // หาวันจันทร์ของสัปดาห์ปัจจุบัน
+      const todayDate = new Date(Date.UTC(year, month - 1, day));
+      const weekday = todayDate.getUTCDay();
+      const mondayOffset = weekday === 0 ? 6 : weekday - 1;
+
+      todayDate.setUTCDate(todayDate.getUTCDate() - mondayOffset);
+
+      const weekStart = [
+        todayDate.getUTCFullYear(),
+        String(todayDate.getUTCMonth() + 1).padStart(2, "0"),
+        String(todayDate.getUTCDate()).padStart(2, "0"),
+      ].join("-");
+
+      const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+
+      // ดึงข้อมูลตั้งแต่ต้นสัปดาห์หรือต้นเดือน แล้วแต่ว่าวันไหนมาก่อน
+      const queryStart = weekStart < monthStart ? weekStart : monthStart;
+      const startUtc = new Date(
+        `${queryStart}T00:00:00+07:00`
+      ).toISOString();
+
+      const rows: { price_points: number; created_at: string }[] = [];
+      let offset = 0;
+      const pageSize = 1000;
+
+      // ดึงข้อมูลเป็นหน้า ป้องกันรายการเกิน 1,000 แล้วตกหล่น
+      while (true) {
+        const { data, error } = await supabase
+          .from("generated_keys")
+          .select("price_points, created_at")
+          .gte("created_at", startUtc)
+          .order("created_at", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+
+        if (error) throw error;
+
+        rows.push(...(data || []));
+
+        if (!data || data.length < pageSize) break;
+
+        offset += pageSize;
+      }
+
+      let todayTotal = 0;
+      let weekTotal = 0;
+      let monthTotal = 0;
+
+      rows.forEach((sale) => {
+        const saleDate = getBangkokDate(new Date(sale.created_at));
+        const price = Number(sale.price_points || 0);
+
+        if (saleDate === today) {
+          todayTotal += price;
+        }
+
+        if (saleDate >= weekStart) {
+          weekTotal += price;
+        }
+
+        if (saleDate >= monthStart) {
+          monthTotal += price;
+        }
+      });
+
+      setSalesSummary({
+        today: todayTotal,
+        week: weekTotal,
+        month: monthTotal,
+      });
+    } catch (error) {
+      setMessage(
+        "โหลดสรุปยอดขายไม่สำเร็จ: " +
+          (error instanceof Error ? error.message : "ไม่ทราบสาเหตุ")
+      );
+    }
+  }
+
   async function loadOverview() {
     if (!supabase) return;
 
@@ -202,6 +311,8 @@ export default function AdminPage() {
       keys: k.count || 0,
       sold: s.count || 0,
     });
+
+    await loadSalesSummary();
   }
 
   async function loadMembers() {
@@ -669,6 +780,13 @@ export default function AdminPage() {
     (item) => item.product_id === stockProduct && !item.used
   );
 
+  function formatCredit(value: number) {
+    return value.toLocaleString("th-TH", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
   function menuButton(id: Tab, label: string, icon: string) {
     return (
       <button
@@ -765,11 +883,53 @@ export default function AdminPage() {
                 <Stat title="KEY ที่สร้างแล้ว" value={stats.sold} icon="🛒" />
               </div>
 
+              {/* สรุปยอดขาย */}
+              <div style={{ ...cardStyle, marginTop: 18 }}>
+                <h3 style={{ marginTop: 0 }}>💰 สรุปยอดขาย</h3>
+                <p style={muted}>
+                  คำนวณจากรายการ KEY ที่ขายสำเร็จ ตามเวลาไทย
+                </p>
+
+                <div style={gridStyle}>
+                  <div style={statCard}>
+                    <p style={muted}>ยอดขายวันนี้</p>
+                    <strong style={{ fontSize: 26, color: "#4ade80" }}>
+                      {formatCredit(salesSummary.today)}
+                    </strong>
+                    <p style={muted}>เครดิต</p>
+                  </div>
+
+                  <div style={statCard}>
+                    <p style={muted}>ยอดขายสัปดาห์นี้</p>
+                    <strong style={{ fontSize: 26, color: "#60a5fa" }}>
+                      {formatCredit(salesSummary.week)}
+                    </strong>
+                    <p style={muted}>เครดิต</p>
+                  </div>
+
+                  <div style={statCard}>
+                    <p style={muted}>ยอดขายเดือนนี้</p>
+                    <strong style={{ fontSize: 26, color: "#f87171" }}>
+                      {formatCredit(salesSummary.month)}
+                    </strong>
+                    <p style={muted}>เครดิต</p>
+                  </div>
+                </div>
+
+                <button
+                  style={buttonStyle}
+                  disabled={loading}
+                  onClick={loadSalesSummary}
+                >
+                  รีเฟรชยอดขาย
+                </button>
+              </div>
+
               <div style={cardStyle}>
                 <h3>ยินดีต้อนรับสู่ระบบหลังบ้าน</h3>
                 <p style={muted}>เลือกฟังก์ชันจากเมนูด้านซ้ายเพื่อจัดการร้าน DUDSHOP777</p>
                 <button style={buttonStyle} onClick={loadOverview}>
-                  รีเฟรชข้อมูล
+                  รีเฟรชข้อมูลทั้งหมด
                 </button>
               </div>
             </>
