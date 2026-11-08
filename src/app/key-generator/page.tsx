@@ -25,6 +25,13 @@ type Price = {
   price_points: number;
 };
 
+type ProductOption = {
+  prices: Price[];
+  duration: string;
+  quantity: number;
+  stock: number;
+};
+
 type GeneratedKey = {
   id: string;
   product_name: string;
@@ -40,18 +47,10 @@ export default function KeyGeneratorPage() {
   const [points, setPoints] = useState(0);
   const [assignedPanel, setAssignedPanel] = useState<PanelKey | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
-  const [productId, setProductId] = useState("");
-  const [prices, setPrices] = useState<Price[]>([]);
-  const [duration, setDuration] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [stock, setStock] = useState(0);
-  const [purchasing, setPurchasing] = useState(false);
+  const [options, setOptions] = useState<Record<string, ProductOption>>({});
+  const [purchasingId, setPurchasingId] = useState("");
   const [message, setMessage] = useState("");
   const [generatedKeys, setGeneratedKeys] = useState<GeneratedKey[]>([]);
-
-  const selectedPrice = prices.find((item) => item.duration === duration);
-  const selectedProduct = products.find((p) => p.id === productId);
-  const totalPrice = selectedPrice ? selectedPrice.price_points * quantity : 0;
 
   const panelName =
     assignedPanel === "reseller_300"
@@ -94,6 +93,26 @@ export default function KeyGeneratorPage() {
     return panel;
   }
 
+  async function getStock(
+    productId: string,
+    duration: string,
+    panel: PanelKey
+  ): Promise<number> {
+    if (!supabase) return 0;
+
+    const { data, error } = await supabase.rpc("get_product_key_stock", {
+      p_product_id: productId,
+      p_duration: duration,
+      p_panel_key: panel,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return Number(data ?? 0);
+  }
+
   async function loadProducts(panel: PanelKey | null) {
     if (!supabase || !panel) return;
 
@@ -110,11 +129,11 @@ export default function KeyGeneratorPage() {
 
     const { data: priceData, error: priceError } = await supabase
       .from("product_panel_duration_prices")
-      .select("product_id")
+      .select("product_id, duration, price_points")
       .eq("panel_key", panel);
 
     if (priceError) {
-      setMessage("โหลดข้อมูลแผงไม่สำเร็จ: " + priceError.message);
+      setMessage("โหลดข้อมูลราคาไม่สำเร็จ: " + priceError.message);
       return;
     }
 
@@ -126,63 +145,77 @@ export default function KeyGeneratorPage() {
       availableIds.has(item.id)
     );
 
+    const newOptions: Record<string, ProductOption> = {};
+
+    for (const product of filtered) {
+      const productPrices = durations
+        .map((duration) => {
+          const found = (priceData || []).find(
+            (item) =>
+              item.product_id === product.id &&
+              item.duration === duration
+          );
+
+          return found
+            ? {
+                duration: found.duration,
+                price_points: Number(found.price_points),
+              }
+            : null;
+        })
+        .filter((item): item is Price => item !== null);
+
+      if (productPrices.length > 0) {
+        newOptions[product.id] = {
+          prices: productPrices,
+          duration: productPrices[0].duration,
+          quantity: 1,
+          stock: 0,
+        };
+      }
+    }
+
     setProducts(filtered);
+    setOptions(newOptions);
 
-    if (filtered.length > 0) {
-      setProductId(filtered[0].id);
-      setMessage("");
-    } else {
-      setProductId("");
+    if (filtered.length === 0) {
       setMessage("ยังไม่มีสินค้าเปิดขายในแผงนี้");
-    }
-  }
-
-  async function loadPrices(id: string, panel: PanelKey) {
-    if (!supabase || !id) return;
-
-    setPrices([]);
-    setDuration("");
-    setStock(0);
-    setQuantity(1);
-
-    const { data, error } = await supabase
-      .from("product_panel_duration_prices")
-      .select("duration, price_points")
-      .eq("product_id", id)
-      .eq("panel_key", panel);
-
-    if (error) {
-      setMessage("โหลดราคาไม่สำเร็จ: " + error.message);
       return;
     }
 
-    const sorted = durations
-      .map((item) => data?.find((price) => price.duration === item))
-      .filter((item): item is Price => Boolean(item));
+    setMessage("");
 
-    setPrices(sorted);
+    const stockResults = await Promise.all(
+      filtered.map(async (product) => {
+        const option = newOptions[product.id];
 
-    if (sorted.length > 0) {
-      setDuration(sorted[0].duration);
-    }
-  }
+        if (!option) return [product.id, 0] as const;
 
-  // โหลดจำนวน KEY ผ่าน RPC โดยไม่เปิดเผย KEY ในคลังให้สมาชิก
-  async function loadStock(id: string, selectedDuration: string) {
-    if (!supabase || !id || !selectedDuration || !assignedPanel) return;
+        try {
+          const stock = await getStock(
+            product.id,
+            option.duration,
+            panel
+          );
 
-    const { data, error } = await supabase.rpc("get_product_key_stock", {
-      p_product_id: id,
-      p_duration: selectedDuration,
-      p_panel_key: assignedPanel,
+          return [product.id, stock] as const;
+        } catch {
+          return [product.id, 0] as const;
+        }
+      })
+    );
+
+    setOptions((current) => {
+      const updated = { ...current };
+
+      for (const [id, stock] of stockResults) {
+        if (updated[id]) {
+          updated[id] = { ...updated[id], stock };
+        }
+      }
+
+      return updated;
     });
-
-    if (error) {
-      setMessage("โหลดสต็อกไม่สำเร็จ: " + error.message);
-      return;
-    }
-
-    setStock(Number(data ?? 0));
   }
 
   useEffect(() => {
@@ -201,7 +234,9 @@ export default function KeyGeneratorPage() {
 
       const panel = await loadProfile();
 
-      if (panel) await loadProducts(panel);
+      if (panel) {
+        await loadProducts(panel);
+      }
 
       setLoading(false);
     }
@@ -209,44 +244,95 @@ export default function KeyGeneratorPage() {
     start();
   }, [router]);
 
-  useEffect(() => {
-    if (productId && assignedPanel) {
-      loadPrices(productId, assignedPanel);
-    }
-  }, [productId, assignedPanel]);
-
-  useEffect(() => {
-    if (productId && duration) {
-      loadStock(productId, duration);
-    }
-  }, [productId, duration, assignedPanel]);
-
-  async function logout() {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    router.replace("/");
+  function updateOption(
+    productId: string,
+    changes: Partial<ProductOption>
+  ) {
+    setOptions((current) => ({
+      ...current,
+      [productId]: {
+        ...current[productId],
+        ...changes,
+      },
+    }));
   }
 
-  async function purchase() {
-    if (!supabase || purchasing) return;
+  async function changeDuration(productId: string, newDuration: string) {
+    if (!assignedPanel) return;
+
+    updateOption(productId, {
+      duration: newDuration,
+      quantity: 1,
+      stock: 0,
+    });
+
+    setGeneratedKeys([]);
+    setMessage("");
+
+    try {
+      const stock = await getStock(
+        productId,
+        newDuration,
+        assignedPanel
+      );
+
+      setOptions((current) => {
+        const existing = current[productId];
+
+        if (!existing || existing.duration !== newDuration) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [productId]: {
+            ...existing,
+            stock,
+          },
+        };
+      });
+    } catch (error) {
+      setMessage(
+        "โหลดสต็อกไม่สำเร็จ: " +
+          (error instanceof Error ? error.message : "ไม่ทราบสาเหตุ")
+      );
+    }
+  }
+
+  async function purchase(product: Product) {
+    if (!supabase || purchasingId) return;
 
     if (!assignedPanel) {
       setMessage("บัญชีนี้ยังไม่ได้รับการกำหนดแผง");
       return;
     }
 
-    if (!productId || !duration || !selectedPrice) {
+    const option = options[product.id];
+
+    if (!option) {
+      setMessage("ไม่พบข้อมูลสินค้า");
+      return;
+    }
+
+    const selectedPrice = option.prices.find(
+      (item) => item.duration === option.duration
+    );
+
+    if (!selectedPrice) {
       setMessage("กรุณาเลือกสินค้าและระยะเวลา");
       return;
     }
 
+    const quantity = option.quantity;
+    const totalPrice = selectedPrice.price_points * quantity;
+
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10) {
-      setMessage("จำนวนคีย์ต้องอยู่ระหว่าง 1 ถึง 10");
+      setMessage("จำนวน KEY ต้องอยู่ระหว่าง 1 ถึง 10");
       return;
     }
 
-    if (quantity > stock) {
-      setMessage("สต็อกคีย์ไม่เพียงพอ");
+    if (quantity > option.stock) {
+      setMessage("สต็อก KEY ไม่เพียงพอ");
       return;
     }
 
@@ -256,12 +342,12 @@ export default function KeyGeneratorPage() {
     }
 
     const confirmed = window.confirm(
-      `ยืนยันการซื้อ ${quantity} คีย์ ราคา ${totalPrice.toLocaleString("th-TH")} เครดิต ใช่หรือไม่?`
+      `ยืนยันการซื้อ ${product.name}\nจำนวน ${quantity} KEY\nราคา ${totalPrice.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} เครดิต ใช่หรือไม่?`
     );
 
     if (!confirmed) return;
 
-    setPurchasing(true);
+    setPurchasingId(product.id);
     setMessage("");
     setGeneratedKeys([]);
 
@@ -269,9 +355,9 @@ export default function KeyGeneratorPage() {
       const { data, error } = await supabase.rpc(
         "generate_product_keys",
         {
-          p_product_id: productId,
+          p_product_id: product.id,
           p_quantity: quantity,
-          p_duration: duration,
+          p_duration: option.duration,
           p_panel_key: assignedPanel,
         }
       );
@@ -290,15 +376,35 @@ export default function KeyGeneratorPage() {
       setMessage("ซื้อสำเร็จ!");
 
       await loadProfile();
-      await loadStock(productId, duration);
+
+      const newStock = await getStock(
+        product.id,
+        option.duration,
+        assignedPanel
+      );
+
+      setOptions((current) => ({
+        ...current,
+        [product.id]: {
+          ...current[product.id],
+          stock: newStock,
+          quantity: 1,
+        },
+      }));
     } catch (error) {
       setMessage(
         "เกิดข้อผิดพลาด: " +
           (error instanceof Error ? error.message : "ไม่ทราบสาเหตุ")
       );
     } finally {
-      setPurchasing(false);
+      setPurchasingId("");
     }
+  }
+
+  async function logout() {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    router.replace("/");
   }
 
   async function copyKey(value: string) {
@@ -336,7 +442,12 @@ export default function KeyGeneratorPage() {
         </div>
         <div className="creditBox">
           <span className="muted">เครดิตคงเหลือ</span>
-          <strong>{points.toLocaleString("th-TH")} เครดิต</strong>
+          <strong>
+            {points.toLocaleString("th-TH", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })} เครดิต
+          </strong>
         </div>
       </div>
 
@@ -351,177 +462,169 @@ export default function KeyGeneratorPage() {
         {panelName}
       </div>
 
-      <section className="purchaseLayout">
-        <div className="purchasePanel">
-          <div className="sectionTitle">
-            <span className="number">01</span>
-            <div>
-              <h2>เลือกสินค้า</h2>
-              <p>SELECT YOUR PRODUCT</p>
-            </div>
-          </div>
+      {!assignedPanel ? (
+        <div className="notice pageNotice">
+          บัญชีนี้ยังไม่ได้รับการกำหนดแผง กรุณาติดต่อแอดมิน
+        </div>
+      ) : products.length === 0 ? (
+        <div className="notice pageNotice">
+          {message || "ยังไม่มีสินค้าเปิดขายในแผงนี้"}
+        </div>
+      ) : (
+        <section className="productGrid">
+          {products.map((product) => {
+            const option = options[product.id];
 
-          {!assignedPanel ? (
-            <div className="notice">บัญชีนี้ยังไม่ได้รับการกำหนดแผง กรุณาติดต่อแอดมิน</div>
-          ) : products.length === 0 ? (
-            <div className="notice">{message || "ยังไม่มีสินค้าเปิดขายในแผงนี้"}</div>
-          ) : (
-            <>
-              {selectedProduct?.image_url ? (
-                <div className="productImageWrap">
-                  <img
-                    src={selectedProduct.image_url}
-                    alt={selectedProduct.name}
-                    className="productImage"
-                  />
-                </div>
-              ) : (
-                <div className="productImagePlaceholder">
-                  ยังไม่มีรูปสินค้า
-                </div>
-              )}
+            if (!option) return null;
 
-              <label>สินค้า</label>
-              <div className="selectWrap">
-                <select
-                  value={productId}
-                  onChange={(e) => {
-                    setProductId(e.target.value);
-                    setGeneratedKeys([]);
-                    setMessage("");
-                  }}
-                >
-                  {products.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            const selectedPrice = option.prices.find(
+              (item) => item.duration === option.duration
+            );
 
-              {selectedProduct?.description && (
-                <p className="description">{selectedProduct.description}</p>
-              )}
+            const totalPrice = selectedPrice
+              ? selectedPrice.price_points * option.quantity
+              : 0;
 
-              <label>ระยะเวลาใช้งาน</label>
-              <div className="durationGrid">
-                {prices.map((item) => (
-                  <button
-                    type="button"
-                    key={item.duration}
-                    className={duration === item.duration ? "duration activeDuration" : "duration"}
-                    onClick={() => {
-                      setDuration(item.duration);
-                      setGeneratedKeys([]);
-                      setMessage("");
-                    }}
-                  >
-                    <strong>{item.duration}</strong>
-                    <span>{item.price_points.toLocaleString("th-TH")} เครดิต</span>
-                  </button>
-                ))}
-              </div>
+            const isPurchasing = purchasingId === product.id;
 
-              {prices.length === 0 && (
-                <div className="notice">สินค้านี้ยังไม่ได้กำหนดราคาในแผงของคุณ</div>
-              )}
-
-              {selectedPrice && (
-                <>
-                  <label>จำนวน KEY (กรอกได้ 1–10)</label>
-                  <div className="selectWrap">
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      step="1"
-                      value={quantity}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setQuantity(value === "" ? 0 : Number(value));
-                      }}
-                      placeholder="กรอกจำนวน KEY"
-                      style={{
-                        width: "100%",
-                        color: "white",
-                        background: "#1b1b20",
-                        border: "1px solid #393940",
-                        borderRadius: "9px",
-                        padding: "14px",
-                        outline: "none",
-                        fontSize: "14px",
-                      }}
+            return (
+              <article className="productCard" key={product.id}>
+                {product.image_url ? (
+                  <div className="productImageWrap">
+                    <img
+                      src={product.image_url}
+                      alt={product.name}
+                      className="productImage"
                     />
+                  </div>
+                ) : (
+                  <div className="productImagePlaceholder">
+                    ยังไม่มีรูปสินค้า
+                  </div>
+                )}
+
+                <div className="productContent">
+                  <h2>{product.name}</h2>
+
+                  {product.description && (
+                    <p className="description">{product.description}</p>
+                  )}
+
+                  <label>ระยะเวลาใช้งาน</label>
+                  <div className="durationGrid">
+                    {option.prices.map((item) => (
+                      <button
+                        type="button"
+                        key={item.duration}
+                        className={
+                          option.duration === item.duration
+                            ? "duration activeDuration"
+                            : "duration"
+                        }
+                        onClick={() =>
+                          changeDuration(product.id, item.duration)
+                        }
+                      >
+                        <strong>{item.duration}</strong>
+                        <span>
+                          {item.price_points.toLocaleString("th-TH", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })} เครดิต
+                        </span>
+                      </button>
+                    ))}
                   </div>
 
                   <div className="stockLine">
                     <span>สต็อกคงเหลือ</span>
-                    <strong className={stock > 0 ? "stockAvailable" : "stockEmpty"}>
-                      {stock} KEY
+                    <strong
+                      className={
+                        option.stock > 0 ? "stockAvailable" : "stockEmpty"
+                      }
+                    >
+                      {option.stock} KEY
                     </strong>
                   </div>
 
-                  <div className="priceSummary">
-                    <div>
-                      <span>ราคาต่อ KEY</span>
-                      <strong>{selectedPrice.price_points.toLocaleString("th-TH")} เครดิต</strong>
+                  <label>จำนวน KEY (1–10)</label>
+                  <input
+                    className="quantityInput"
+                    type="number"
+                    min="1"
+                    max="10"
+                    step="1"
+                    value={option.quantity}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      updateOption(product.id, {
+                        quantity: value === "" ? 0 : Number(value),
+                      });
+                    }}
+                  />
+
+                  {selectedPrice && (
+                    <div className="priceSummary">
+                      <div>
+                        <span>ราคาต่อ KEY</span>
+                        <strong>
+                          {selectedPrice.price_points.toLocaleString("th-TH", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })} เครดิต
+                        </strong>
+                      </div>
+                      <div>
+                        <span>จำนวน</span>
+                        <strong>{option.quantity || 0} KEY</strong>
+                      </div>
+                      <div className="totalLine">
+                        <span>ยอดชำระทั้งหมด</span>
+                        <strong>
+                          {totalPrice.toLocaleString("th-TH", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })} เครดิต
+                        </strong>
+                      </div>
                     </div>
-                    <div>
-                      <span>จำนวน</span>
-                      <strong>{quantity || 0} KEY</strong>
-                    </div>
-                    <div className="totalLine">
-                      <span>ยอดชำระทั้งหมด</span>
-                      <strong>{totalPrice.toLocaleString("th-TH")} เครดิต</strong>
-                    </div>
-                  </div>
+                  )}
 
                   <button
                     className="buyButton"
-                    onClick={purchase}
+                    onClick={() => purchase(product)}
                     disabled={
-                      purchasing ||
-                      stock < 1 ||
-                      !Number.isInteger(quantity) ||
-                      quantity < 1 ||
-                      quantity > 10 ||
-                      quantity > stock
+                      Boolean(purchasingId) ||
+                      !selectedPrice ||
+                      option.stock < 1 ||
+                      !Number.isInteger(option.quantity) ||
+                      option.quantity < 1 ||
+                      option.quantity > 10 ||
+                      option.quantity > option.stock
                     }
                   >
-                    {purchasing ? "กำลังดำเนินการ..." : "BUY NOW — ซื้อสินค้า"}
+                    {isPurchasing
+                      ? "กำลังดำเนินการ..."
+                      : "BUY NOW — ซื้อสินค้า"}
                   </button>
-                </>
-              )}
-            </>
-          )}
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
 
-          {message && (
-            <div className={message === "ซื้อสำเร็จ!" || message === "คัดลอก KEY สำเร็จ" ? "successMessage" : "notice"}>
-              {message}
-            </div>
-          )}
+      {message && (
+        <div
+          className={
+            message === "ซื้อสำเร็จ!" || message === "คัดลอก KEY สำเร็จ"
+              ? "successMessage pageNotice"
+              : "notice pageNotice"
+          }
+        >
+          {message}
         </div>
-
-        <aside className="sidePanel">
-          <div className="sideIcon">D</div>
-          <span className="eyebrow">YOUR ACCOUNT</span>
-          <h2>ข้อมูลสมาชิก</h2>
-          <div className="accountRow">
-            <span>ชื่อสมาชิก</span>
-            <strong>{username}</strong>
-          </div>
-          <div className="accountRow">
-            <span>แผงราคา</span>
-            <strong>{panelName}</strong>
-          </div>
-          <div className="accountCredit">
-            <span>เครดิตที่มี</span>
-            <strong>{points.toLocaleString("th-TH")}</strong>
-            <small>CREDITS</small>
-          </div>
-          <p className="sideNote">เครดิตจะถูกหักเมื่อการซื้อสำเร็จเท่านั้น</p>
-        </aside>
-      </section>
+      )}
 
       {generatedKeys.length > 0 && (
         <section className="resultPanel">
@@ -540,11 +643,45 @@ export default function KeyGeneratorPage() {
                 <span>{item.duration}</span>
               </div>
               <code>{item.key_value}</code>
-              <button onClick={() => copyKey(item.key_value)}>คัดลอก KEY</button>
+              <button onClick={() => copyKey(item.key_value)}>
+                คัดลอก KEY
+              </button>
             </div>
           ))}
         </section>
       )}
+
+      <aside className="accountPanel">
+        <div className="accountHeading">
+          <span className="sideIcon">D</span>
+          <div>
+            <span className="eyebrow">YOUR ACCOUNT</span>
+            <h2>ข้อมูลสมาชิก</h2>
+          </div>
+        </div>
+
+        <div className="accountRow">
+          <span>ชื่อสมาชิก</span>
+          <strong>{username}</strong>
+        </div>
+        <div className="accountRow">
+          <span>แผงราคา</span>
+          <strong>{panelName}</strong>
+        </div>
+        <div className="accountCredit">
+          <span>เครดิตที่มี</span>
+          <strong>
+            {points.toLocaleString("th-TH", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </strong>
+          <small>CREDITS</small>
+        </div>
+        <p className="sideNote">
+          เครดิตจะถูกหักเมื่อการซื้อสำเร็จเท่านั้น
+        </p>
+      </aside>
 
       <footer>© 2026 DUDSHOP777 · ALL RIGHTS RESERVED</footer>
 
@@ -583,80 +720,95 @@ export default function KeyGeneratorPage() {
         .pageHeading h1 span { color: #ed1737; }
         .pageHeading p { color: #999; margin: 0; }
         .panelBadge {
-          max-width: 1180px; margin: 0 auto 18px; color: #ff6579;
+          max-width: 1180px; margin: 0 auto 20px; color: #ff6579;
           background: #210d12; border: 1px solid #5b1a27;
           display: inline-flex; align-items: center; gap: 9px;
           padding: 9px 13px; border-radius: 30px; font-size: 12px;
         }
         .liveDot { width: 7px; height: 7px; border-radius: 50%; background: #f32648; box-shadow: 0 0 10px #f32648; }
-        .purchaseLayout {
+        .productGrid {
           max-width: 1180px; margin: 0 auto;
-          display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(250px, .8fr);
+          display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
           gap: 18px; align-items: start;
         }
-        .purchasePanel, .sidePanel, .resultPanel { background: #111114; border: 1px solid #2a2a30; border-radius: 16px; padding: 24px; }
-        .sectionTitle { display: flex; gap: 13px; align-items: center; margin-bottom: 25px; }
-        .number { color: #ff405b; font-size: 20px; font-weight: 900; background: #2a1016; border: 1px solid #5c1b28; border-radius: 10px; padding: 10px 12px; }
-        .sectionTitle h2, .sidePanel h2 { margin: 0; font-size: 19px; }
-        .sectionTitle p { margin: 4px 0 0; color: #777; font-size: 10px; letter-spacing: 1.5px; }
-        label { display: block; color: #ddd; font-size: 13px; font-weight: 700; margin: 20px 0 9px; }
+        .productCard {
+          overflow: hidden; background: #111114;
+          border: 1px solid #2a2a30; border-radius: 16px;
+        }
         .productImageWrap {
-          width: 100%; height: 260px; display: flex; align-items: center;
+          width: 100%; height: 210px; display: flex; align-items: center;
           justify-content: center; overflow: hidden; background: #09090b;
-          border: 1px solid #333; border-radius: 12px; margin-bottom: 18px;
+          border-bottom: 1px solid #29292e;
         }
         .productImage { width: 100%; height: 100%; object-fit: contain; }
         .productImagePlaceholder {
           height: 180px; display: flex; align-items: center; justify-content: center;
-          color: #777; background: #09090b; border: 1px dashed #444;
-          border-radius: 12px; margin-bottom: 18px; font-size: 13px;
+          color: #777; background: #09090b; border-bottom: 1px dashed #444;
+          font-size: 13px;
         }
-        .selectWrap select { width: 100%; color: white; background: #1b1b20; border: 1px solid #393940; border-radius: 9px; padding: 14px; outline: none; font-size: 14px; }
-        .selectWrap select:focus { border-color: #ed1737; }
-        .selectWrap option { background: #1b1b20; }
-        .description { color: #999; font-size: 13px; }
-        .durationGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 9px; }
+        .productContent { padding: 20px; }
+        .productContent h2 { margin: 0; font-size: 19px; }
+        .description { color: #999; font-size: 13px; line-height: 1.6; }
+        label { display: block; color: #ddd; font-size: 13px; font-weight: 700; margin: 19px 0 9px; }
+        .durationGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
         .duration {
-          color: #ccc; text-align: left; padding: 13px; background: #19191e;
-          border: 1px solid #33333a; border-radius: 10px; cursor: pointer;
+          color: #ccc; text-align: left; padding: 11px;
+          background: #19191e; border: 1px solid #33333a;
+          border-radius: 9px; cursor: pointer;
           display: flex; flex-direction: column; gap: 6px;
         }
-        .duration strong { font-size: 13px; }
+        .duration strong { font-size: 12px; }
         .duration span { color: #888; font-size: 11px; }
-        .activeDuration { border-color: #e51b3a; background: linear-gradient(145deg, #351018, #1b1014); box-shadow: 0 0 0 1px rgba(237,23,55,.15); color: white; }
+        .activeDuration { border-color: #e51b3a; background: linear-gradient(145deg, #351018, #1b1014); color: white; }
         .activeDuration span { color: #ff8293; }
-        .stockLine, .priceSummary > div { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #29292e; font-size: 13px; }
-        .stockLine { margin-top: 14px; color: #999; }
+        .quantityInput {
+          width: 100%; box-sizing: border-box; color: white;
+          background: #1b1b20; border: 1px solid #393940;
+          border-radius: 9px; padding: 13px; outline: none; font-size: 14px;
+        }
+        .quantityInput:focus { border-color: #ed1737; }
+        .stockLine, .priceSummary > div {
+          display: flex; justify-content: space-between; gap: 12px;
+          padding: 12px 0; border-bottom: 1px solid #29292e; font-size: 13px;
+        }
+        .stockLine { margin-top: 12px; color: #999; }
         .stockAvailable { color: #48d597; }
         .stockEmpty { color: #ff405b; }
-        .priceSummary { margin-top: 14px; padding: 12px 16px; background: #19191e; border: 1px solid #303037; border-radius: 12px; }
+        .priceSummary { margin-top: 12px; padding: 12px 14px; background: #19191e; border: 1px solid #303037; border-radius: 12px; }
         .priceSummary span { color: #999; }
-        .priceSummary strong { color: #eee; }
-        .priceSummary .totalLine { border: 0; margin-top: 5px; padding-top: 16px; font-weight: 800; }
-        .totalLine strong { color: #ff405b; font-size: 20px; }
+        .priceSummary strong { color: #eee; text-align: right; }
+        .priceSummary .totalLine { border: 0; margin-top: 5px; padding-top: 14px; font-weight: 800; }
+        .totalLine strong { color: #ff405b; font-size: 17px; }
         .buyButton {
-          width: 100%; margin-top: 18px; padding: 16px; color: white;
+          width: 100%; margin-top: 16px; padding: 15px; color: white;
           background: linear-gradient(100deg, #a90020, #ed1737); border: 0;
-          border-radius: 10px; font-size: 15px; font-weight: 900; cursor: pointer;
-          box-shadow: 0 7px 22px rgba(210,0,35,.18);
+          border-radius: 10px; font-size: 14px; font-weight: 900; cursor: pointer;
         }
         .buyButton:hover:not(:disabled) { filter: brightness(1.15); }
-        .buyButton:disabled { opacity: .45; cursor: not-allowed; }
-        .sidePanel { position: sticky; top: 18px; }
-        .sideIcon { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 18px; background: #3a1019; color: #ff405b; border: 1px solid #712032; border-radius: 12px; font-weight: 950; font-size: 23px; }
-        .sidePanel h2 { margin: 7px 0 20px; }
+        .buyButton:disabled { opacity: .4; cursor: not-allowed; }
+        .accountPanel {
+          max-width: 1132px; margin: 22px auto 0; padding: 22px;
+          background: #111114; border: 1px solid #2a2a30; border-radius: 16px;
+        }
+        .accountHeading { display: flex; align-items: center; gap: 13px; margin-bottom: 15px; }
+        .accountHeading h2 { margin: 5px 0 0; font-size: 18px; }
+        .sideIcon { width: 42px; height: 42px; display: grid; place-items: center; background: #3a1019; color: #ff405b; border: 1px solid #712032; border-radius: 12px; font-weight: 950; font-size: 22px; }
         .accountRow { display: flex; justify-content: space-between; gap: 10px; padding: 12px 0; border-bottom: 1px solid #29292e; font-size: 12px; }
         .accountRow span { color: #888; }
-        .accountRow strong { text-align: right; }
         .accountCredit { margin-top: 18px; padding: 18px; background: #250e14; border: 1px solid #61202d; border-radius: 12px; display: flex; flex-direction: column; gap: 6px; }
         .accountCredit span { color: #c9a0a7; font-size: 12px; }
         .accountCredit strong { color: #ff405b; font-size: 27px; }
         .accountCredit small { color: #96636c; font-size: 9px; letter-spacing: 2px; }
         .sideNote { color: #777; font-size: 11px; line-height: 1.7; }
-        .notice, .successMessage { margin-top: 15px; padding: 13px; border-radius: 9px; font-size: 13px; line-height: 1.6; }
+        .notice, .successMessage { padding: 13px; border-radius: 9px; font-size: 13px; line-height: 1.6; }
         .notice { color: #ff9aaa; background: #281117; border: 1px solid #652332; }
         .successMessage { color: #77e4ad; background: #10271c; border: 1px solid #236b43; }
-        .resultPanel { max-width: 1180px; margin: 20px auto; }
+        .pageNotice { max-width: 1154px; margin: 15px auto; }
+        .resultPanel { max-width: 1132px; margin: 20px auto; background: #111114; border: 1px solid #2a2a30; border-radius: 16px; padding: 22px; }
+        .sectionTitle { display: flex; gap: 13px; align-items: center; margin-bottom: 20px; }
+        .number { color: #ff405b; font-size: 20px; font-weight: 900; background: #2a1016; border: 1px solid #5c1b28; border-radius: 10px; padding: 10px 12px; }
+        .sectionTitle h2 { margin: 0; font-size: 19px; }
+        .sectionTitle p { margin: 4px 0 0; color: #777; font-size: 10px; letter-spacing: 1.5px; }
         .keyCard { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px; padding: 15px; margin-top: 10px; background: #1a1a1f; border: 1px solid #35353c; border-left: 3px solid #ed1737; border-radius: 10px; }
         .keyCard > div { display: flex; flex-direction: column; gap: 5px; }
         .keyCard > div span { color: #888; font-size: 12px; }
@@ -665,14 +817,12 @@ export default function KeyGeneratorPage() {
         footer { max-width: 1180px; margin: 45px auto 0; padding: 20px 0; color: #555; border-top: 1px solid #252529; text-align: center; font-size: 11px; }
         @media (max-width: 760px) {
           .shopShell { padding: 12px; }
-          .purchaseLayout { grid-template-columns: 1fr; }
-          .sidePanel { position: static; }
           .memberBar { justify-content: space-between; }
           .pageHeading { margin-top: 35px; }
-          .purchasePanel, .sidePanel, .resultPanel { padding: 17px; }
-          .keyCard { grid-template-columns: 1fr; }
           .navLinks { width: 100%; }
           .navLinks a { padding: 8px; }
+          .keyCard { grid-template-columns: 1fr; }
+          .accountPanel, .resultPanel { padding: 17px; }
         }
       `}</style>
     </main>
